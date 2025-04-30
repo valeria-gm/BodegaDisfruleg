@@ -3,7 +3,13 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from fpdf import FPDF
 from datetime import datetime
+import mysql.connector
+from conexion import conectar
+from decimal import Decimal
 
+
+
+"""
 # Datos simulados
 clientes = [
     {"id": 1, "nombre": "Valentina"},
@@ -27,6 +33,23 @@ productos = [
     {"id": 13, "nombre": "Sandía", "precio": 17.00},
     {"id": 14, "nombre": "Frambuesa", "precio": 49.00}
 ]
+"""
+conn = conectar()
+cursor = conn.cursor(dictionary=True)
+
+# Obtener clientes desde la base de datos
+cursor.execute("SELECT id_cliente, nombre FROM cliente")
+clientes = cursor.fetchall()
+
+# Obtener productos con precio, considerando el tipo de cliente (aquí asumo el tipo de cliente 1 para obtener los precios por defecto)
+tipo_cliente_id = 1  # Aquí podrías permitir que el usuario seleccione el tipo de cliente, si es necesario.
+cursor.execute("""
+    SELECT p.id_producto, p.nombre_producto, p.unidad, pr.precio 
+    FROM producto p
+    JOIN precio pr ON p.id_producto = pr.id_producto
+    WHERE pr.id_tipo = %s
+""", (tipo_cliente_id,))
+productos = cursor.fetchall()
 
 # Crear carpeta recibos si no existe
 if not os.path.exists("recibos"):
@@ -50,7 +73,7 @@ class ReciboApp:
         self.cliente_combo = ttk.Combobox(self.root, textvariable=self.cliente_seleccionado, values=nombres_clientes, state="readonly")
         self.cliente_combo.pack(pady=5)
 
-        tk.Label(self.root, text="Ingresa los kilos de cada producto:", font=("Arial", 14)).pack(pady=10)
+        tk.Label(self.root, text="Ingresa las unidades de cada producto:", font=("Arial", 14)).pack(pady=10)
 
         frame_productos = tk.Frame(self.root)
         frame_productos.pack(pady=5)
@@ -59,10 +82,10 @@ class ReciboApp:
             fila = tk.Frame(frame_productos)
             fila.pack(fill="x", pady=2)
 
-            tk.Label(fila, text=f"{producto['nombre']} - ${producto['precio']:.2f} por kg", width=40, anchor="w").pack(side="left")
+            tk.Label(fila, text=f"{producto['nombre_producto']} - {producto['unidad']} - ${producto['precio']:.2f} por unidad", width=50, anchor="w").pack(side="left")
             entry = tk.Entry(fila, width=10)
             entry.pack(side="right", padx=5)
-            self.entries_cantidades[producto["id"]] = (producto, entry)
+            self.entries_cantidades[producto["id_producto"]] = (producto, entry)
 
         tk.Button(self.root, text="Generar Recibo", command=self.generar_recibo).pack(pady=20)
 
@@ -81,8 +104,8 @@ class ReciboApp:
                 cantidad = 0
 
             if cantidad > 0:
-                total = cantidad * producto["precio"]
-                productos_finales.append((producto["nombre"], cantidad, producto["precio"], total))
+                total = Decimal(str(cantidad)) * producto["precio"]
+                productos_finales.append((producto["nombre_producto"], cantidad, producto["unidad"], producto["precio"], total))
                 total_general += total
 
         if not productos_finales:
@@ -105,14 +128,15 @@ class ReciboApp:
 
         pdf.set_font("Arial", size=10)
         pdf.cell(60, 10, "Producto", 1)
-        pdf.cell(30, 10, "Kilos", 1)
-        pdf.cell(40, 10, "Precio/Kg", 1)
+        pdf.cell(30, 10, "Cantidad", 1)
+        pdf.cell(40, 10, "Precio/Unidad", 1)
+        pdf.cell(40, 10, "Unidad", 1)
         pdf.cell(40, 10, "Total", 1)
         pdf.ln()
 
-        for nombre, cantidad, precio_unitario, total in productos_finales:
+        for nombre, cantidad, unidad, precio_unitario, total in productos_finales:
             pdf.cell(60, 10, nombre, 1)
-            pdf.cell(30, 10, f"{cantidad:.2f}", 1)
+            pdf.cell(30, 10, f"{cantidad:.2f} {unidad}", 1)
             pdf.cell(40, 10, f"${precio_unitario:.2f}", 1)
             pdf.cell(40, 10, f"${total:.2f}", 1)
             pdf.ln()

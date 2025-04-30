@@ -1,19 +1,9 @@
-CREATE USER 'valeria'@'localhost' IDENTIFIED BY 'vay1T0.n43';
+CREATE USER 'valeria'@'localhost' IDENTIFIED BY 'proYect0.593';
 GRANT ALL PRIVILEGES ON disfruleg.* TO 'valeria'@'localhost' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 
-CREATE USER 'jared'@'localhost' IDENTIFIED BY 'zoibnG31';
+CREATE USER 'jared'@'localhost' IDENTIFIED BY 'zoibnG31!!EAEA';
 GRANT ALL PRIVILEGES ON disfruleg.* TO 'jared'@'localhost' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 
-CREATE USER DDL_USER@localhost IDENTIFIED BY 'shakalaka,555';
-GRANT CREATE, ALTER, DROP, CREATE VIEW, DROP VIEW, SHOW VIEW ON disfruleg.* TO DDL@localhost WITH GRANT OPTION;
-FLUSH PRIVILEGES;
 
-CREATE USER DML@localhost IDENTIFIED BY 'tralalerotralala;111';
-GRANT INSERT, UPDATE, DELETE, SELECT ON disfruleg.* TO DML@localhost WITH GRANT OPTION;
-FLUSH PRIVILEGES;
-
-CREATE USER supremo@localhost IDENTIFIED BY 'michoacanesmagico!888';
-GRANT ALL PRIVILEGES ON disfruleg.* TO supremo@localhost WITH GRANT OPTION;
-FLUSH PRIVILEGES;
