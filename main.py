@@ -7,49 +7,12 @@ import mysql.connector
 from conexion import conectar
 from decimal import Decimal
 
-
-
-"""
-# Datos simulados
-clientes = [
-    {"id": 1, "nombre": "Valentina"},
-    {"id": 2, "nombre": "Carlos"},
-    {"id": 3, "nombre": "Mariana"}
-]
-
-productos = [
-    {"id": 1, "nombre": "Col morado", "precio": 50.00},
-    {"id": 2, "nombre": "Huevo", "precio": 42.00},
-    {"id": 3, "nombre": "Jitomate bola", "precio": 43.00},
-    {"id": 4, "nombre": "Chile habanero", "precio": 75.00},
-    {"id": 5, "nombre": "Rábano rojo", "precio": 45.00},
-    {"id": 6, "nombre": "Frijol", "precio": 32.50},
-    {"id": 7, "nombre": "Jitomate", "precio": 22.00},
-    {"id": 8, "nombre": "Apio", "precio": 18.00},
-    {"id": 9, "nombre": "Chorizo", "precio": 95.00},
-    {"id": 10, "nombre": "Bistec de puerco", "precio": 109.00},
-    {"id": 11, "nombre": "Tocino", "precio": 145.00},
-    {"id": 12, "nombre": "Queso Oaxaca", "precio": 145.00},
-    {"id": 13, "nombre": "Sandía", "precio": 17.00},
-    {"id": 14, "nombre": "Frambuesa", "precio": 49.00}
-]
-"""
 conn = conectar()
 cursor = conn.cursor(dictionary=True)
 
-# Obtener clientes desde la base de datos
-cursor.execute("SELECT id_cliente, nombre FROM cliente")
+# Obtener clientes desde la base de datos con su tipo
+cursor.execute("SELECT id_cliente, nombre, id_tipo FROM cliente")
 clientes = cursor.fetchall()
-
-# Obtener productos con precio, considerando el tipo de cliente (aquí asumo el tipo de cliente 1 para obtener los precios por defecto)
-tipo_cliente_id = 1  # Aquí podrías permitir que el usuario seleccione el tipo de cliente, si es necesario.
-cursor.execute("""
-    SELECT p.id_producto, p.nombre_producto, p.unidad, pr.precio 
-    FROM producto p
-    JOIN precio pr ON p.id_producto = pr.id_producto
-    WHERE pr.id_tipo = %s
-""", (tipo_cliente_id,))
-productos = cursor.fetchall()
 
 # Crear carpeta recibos si no existe
 if not os.path.exists("recibos"):
@@ -63,31 +26,72 @@ class ReciboApp:
 
         self.cliente_seleccionado = tk.StringVar()
         self.entries_cantidades = {}
+        self.frame_productos = None
+        self.cliente_id = None
+        self.tipo_cliente_id = None
 
         self.crear_interfaz()
 
     def crear_interfaz(self):
         tk.Label(self.root, text="Selecciona el Cliente:", font=("Arial", 14)).pack(pady=10)
 
+        # Crear combobox con nombres de clientes
         nombres_clientes = [cliente["nombre"] for cliente in clientes]
-        self.cliente_combo = ttk.Combobox(self.root, textvariable=self.cliente_seleccionado, values=nombres_clientes, state="readonly")
+        self.cliente_combo = ttk.Combobox(self.root, textvariable=self.cliente_seleccionado, 
+                                         values=nombres_clientes, state="readonly")
         self.cliente_combo.pack(pady=5)
+        self.cliente_combo.bind("<<ComboboxSelected>>", self.actualizar_precios)
 
         tk.Label(self.root, text="Ingresa las unidades de cada producto:", font=("Arial", 14)).pack(pady=10)
 
-        frame_productos = tk.Frame(self.root)
-        frame_productos.pack(pady=5)
+        # Crear frame para productos
+        self.frame_productos = tk.Frame(self.root)
+        self.frame_productos.pack(pady=5, fill="both", expand=True)
 
+        # Botón para generar recibo
+        tk.Button(self.root, text="Generar Recibo", command=self.generar_recibo).pack(pady=20)
+
+    def actualizar_precios(self, event=None):
+        # Limpiar productos anteriores
+        for widget in self.frame_productos.winfo_children():
+            widget.destroy()
+        
+        # Obtener el cliente seleccionado
+        cliente_nombre = self.cliente_seleccionado.get()
+        
+        # Buscar el tipo de cliente
+        for cliente in clientes:
+            if cliente["nombre"] == cliente_nombre:
+                self.cliente_id = cliente["id_cliente"]
+                self.tipo_cliente_id = cliente["id_tipo"]
+                break
+        
+        # Si no se encontró el tipo de cliente, usar el tipo 1 por defecto
+        if not self.tipo_cliente_id:
+            self.tipo_cliente_id = 1
+        
+        # Obtener productos con precios para este tipo de cliente
+        cursor.execute("""
+            SELECT p.id_producto, p.nombre_producto, p.unidad, pr.precio 
+            FROM producto p
+            JOIN precio pr ON p.id_producto = pr.id_producto
+            WHERE pr.id_tipo = %s
+        """, (self.tipo_cliente_id,))
+        productos = cursor.fetchall()
+        
+        # Reiniciar diccionario de entradas
+        self.entries_cantidades = {}
+        
+        # Crear entradas para cada producto con los precios actualizados
         for producto in productos:
-            fila = tk.Frame(frame_productos)
+            fila = tk.Frame(self.frame_productos)
             fila.pack(fill="x", pady=2)
 
-            tk.Label(fila, text=f"{producto['nombre_producto']} - {producto['unidad']} - ${producto['precio']:.2f} por unidad", width=50, anchor="w").pack(side="left")
+            tk.Label(fila, text=f"{producto['nombre_producto']} - {producto['unidad']} - ${producto['precio']:.2f} por unidad", 
+                    width=50, anchor="w").pack(side="left")
             entry = tk.Entry(fila, width=10)
             entry.pack(side="right", padx=5)
             self.entries_cantidades[producto["id_producto"]] = (producto, entry)
-
-        tk.Button(self.root, text="Generar Recibo", command=self.generar_recibo).pack(pady=20)
 
     def generar_recibo(self):
         if not self.cliente_seleccionado.get():
@@ -117,7 +121,7 @@ class ReciboApp:
     def crear_pdf(self, productos_finales, total_general):
         cliente = self.cliente_seleccionado.get()
         fecha = datetime.now().strftime("%Y-%m-%d")
-        nombre_archivo = f"recibos/recibo_{cliente.lower()}_{fecha}.pdf"
+        nombre_archivo = f"recibos/recibo_{cliente.lower().replace(' ', '_')}_{fecha}.pdf"
 
         pdf = FPDF()
         pdf.add_page()
@@ -129,25 +133,56 @@ class ReciboApp:
         pdf.set_font("Arial", size=10)
         pdf.cell(60, 10, "Producto", 1)
         pdf.cell(30, 10, "Cantidad", 1)
-        pdf.cell(40, 10, "Precio/Unidad", 1)
-        pdf.cell(40, 10, "Unidad", 1)
-        pdf.cell(40, 10, "Total", 1)
+        pdf.cell(30, 10, "Unidad", 1)
+        pdf.cell(30, 10, "Precio/Unidad", 1)
+        pdf.cell(30, 10, "Total", 1)
         pdf.ln()
 
         for nombre, cantidad, unidad, precio_unitario, total in productos_finales:
             pdf.cell(60, 10, nombre, 1)
-            pdf.cell(30, 10, f"{cantidad:.2f} {unidad}", 1)
-            pdf.cell(40, 10, f"${precio_unitario:.2f}", 1)
-            pdf.cell(40, 10, f"${total:.2f}", 1)
+            pdf.cell(30, 10, f"{cantidad:.2f}", 1)
+            pdf.cell(30, 10, f"{unidad}", 1)
+            pdf.cell(30, 10, f"${precio_unitario:.2f}", 1)
+            pdf.cell(30, 10, f"${total:.2f}", 1)
             pdf.ln()
 
         pdf.ln(5)
-        pdf.cell(130, 10, "TOTAL", 1)
-        pdf.cell(40, 10, f"${total_general:.2f}", 1)
+        pdf.cell(150, 10, "TOTAL", 1)
+        pdf.cell(30, 10, f"${total_general:.2f}", 1)
+
+        # Guardar factura en la base de datos si se desea implementar en el futuro
+        # self.guardar_factura(productos_finales)
 
         pdf.output(nombre_archivo)
 
         messagebox.showinfo("Éxito", f"Recibo guardado en {nombre_archivo}")
+    
+    # Método opcional para guardar la factura en la base de datos
+    def guardar_factura(self, productos_finales):
+        try:
+            # Insertar factura
+            cursor.execute(
+                "INSERT INTO factura (fecha, id_cliente) VALUES (%s, %s)",
+                (datetime.now().strftime("%Y-%m-%d"), self.cliente_id)
+            )
+            factura_id = cursor.lastrowid
+            
+            # Insertar detalles de factura
+            for nombre, cantidad, unidad, precio_unitario, total in productos_finales:
+                # Buscar id del producto por nombre
+                cursor.execute("SELECT id_producto FROM producto WHERE nombre_producto = %s", (nombre,))
+                producto = cursor.fetchone()
+                if producto:
+                    cursor.execute(
+                        "INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_compra) VALUES (%s, %s, %s, %s)",
+                        (factura_id, producto["id_producto"], cantidad, precio_unitario)
+                    )
+            
+            conn.commit()
+            messagebox.showinfo("Base de datos", "Factura guardada en la base de datos")
+        except Exception as e:
+            conn.rollback()
+            messagebox.showerror("Error", f"Error al guardar en la base de datos: {str(e)}")
 
 if __name__ == "__main__":
     root = tk.Tk()
