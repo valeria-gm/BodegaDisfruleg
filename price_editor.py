@@ -17,19 +17,24 @@ class PriceEditorApp:
         
         # Variables
         self.current_tipo_cliente = tk.IntVar(value=1)  # Default to Regular
+        self.changes_made = False  # Track if changes have been made
         
         self.create_interface()
         self.load_products()
         
     def create_interface(self):
+        # Main frame to contain all elements
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill="both", expand=True)
+        
         # Title
-        title_frame = tk.Frame(self.root)
+        title_frame = tk.Frame(main_frame)
         title_frame.pack(fill="x", pady=10)
         
         tk.Label(title_frame, text="EDITOR DE PRECIOS Y PRODUCTOS", font=("Arial", 18, "bold")).pack()
         
         # Customer type selection
-        tipo_frame = tk.Frame(self.root)
+        tipo_frame = tk.Frame(main_frame)
         tipo_frame.pack(fill="x", pady=5)
         
         tk.Label(tipo_frame, text="Tipo de Cliente:", font=("Arial", 12)).pack(side="left", padx=10)
@@ -44,7 +49,7 @@ class PriceEditorApp:
             rb.pack(side="left", padx=10)
         
         # Search and action buttons frame
-        action_frame = tk.Frame(self.root)
+        action_frame = tk.Frame(main_frame)
         action_frame.pack(fill="x", pady=5, padx=10)
         
         # Search section
@@ -65,9 +70,14 @@ class PriceEditorApp:
         tk.Button(buttons_frame, text="Eliminar Producto", command=self.delete_product, 
                   bg="#f44336", fg="white", padx=10, pady=3).pack(side="left", padx=5)
         
-        # Products table
-        table_frame = tk.Frame(self.root)
-        table_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # Create a frame that will contain the scrollable table
+        # This is the key improvement: using a fixed height for the table container
+        table_container = tk.Frame(main_frame)
+        table_container.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Products table with scrollbar
+        table_frame = tk.Frame(table_container)
+        table_frame.pack(fill="both", expand=True)
         
         # Scrollbar
         scrollbar = tk.Scrollbar(table_frame)
@@ -94,15 +104,17 @@ class PriceEditorApp:
         # Double-click to edit price
         self.product_tree.bind("<Double-1>", self.edit_price)
         
-        # Buttons frame
-        button_frame = tk.Frame(self.root)
+        # Fixed bottom frame for buttons - always visible
+        button_frame = tk.Frame(main_frame)
         button_frame.pack(fill="x", pady=10, padx=10)
         
-        tk.Button(button_frame, text="Guardar Cambios", font=("Arial", 12), 
-                 command=self.save_all_changes, bg="#4CAF50", fg="white", padx=15, pady=5).pack(side="right")
+        save_button = tk.Button(button_frame, text="Guardar Cambios", font=("Arial", 12), 
+                 command=self.save_all_changes, bg="#4CAF50", fg="white", padx=15, pady=5)
+        save_button.pack(side="right")
         
-        tk.Button(button_frame, text="Cancelar Cambios", font=("Arial", 12), 
-                 command=self.load_products, bg="#f44336", fg="white", padx=15, pady=5).pack(side="right", padx=10)
+        cancel_button = tk.Button(button_frame, text="Cancelar Cambios", font=("Arial", 12), 
+                 command=self.load_products, bg="#f44336", fg="white", padx=15, pady=5)
+        cancel_button.pack(side="right", padx=10)
         
         # Status bar
         self.status_var = tk.StringVar()
@@ -255,9 +267,13 @@ class PriceEditorApp:
         y = (popup.winfo_screenheight() // 2) - (height // 2)
         popup.geometry('{}x{}+{}+{}'.format(width, height, x, y))
         
+        # Create a main container frame
+        main_frame = tk.Frame(popup)
+        main_frame.pack(fill="both", expand=True)
+        
         # Product info
-        tk.Label(popup, text=f"Producto: {product['nombre_producto']}", font=("Arial", 12)).pack(pady=5)
-        tk.Label(popup, text=f"Unidad: {product['unidad']}", font=("Arial", 12)).pack(pady=5)
+        tk.Label(main_frame, text=f"Producto: {product['nombre_producto']}", font=("Arial", 12)).pack(pady=5)
+        tk.Label(main_frame, text=f"Unidad: {product['unidad']}", font=("Arial", 12)).pack(pady=5)
         
         # Get all customer types
         self.cursor.execute("SELECT id_tipo, nombre FROM tipo_cliente")
@@ -265,24 +281,31 @@ class PriceEditorApp:
         
         # Price entries for all customer types
         entries = {}
-        price_frame = tk.Frame(popup)
-        price_frame.pack(pady=10)
+        
+        # Create a frame with fixed height for prices
+        price_container = tk.Frame(main_frame)
+        price_container.pack(fill="x", padx=10, pady=5)
+        
+        # Create price entries in a simple frame
+        price_frame = tk.Frame(price_container)
+        price_frame.pack(fill="x")
         
         for tipo in tipos:
             tipo_frame = tk.Frame(price_frame)
-            tipo_frame.pack(pady=5)
+            tipo_frame.pack(pady=3, fill="x")
             
-            tk.Label(tipo_frame, text=f"Precio para {tipo['nombre']}: $", font=("Arial", 12)).pack(side="left")
-            entry = tk.Entry(tipo_frame, width=10, font=("Arial", 12))
+            tk.Label(tipo_frame, text=f"Precio para {tipo['nombre']}:", width=18, anchor="w").pack(side="left")
+            tk.Label(tipo_frame, text="$").pack(side="left")
+            entry = tk.Entry(tipo_frame, width=10)
             entry.pack(side="left")
             entries[tipo['id_tipo']] = entry
         
         # Focus on current customer type price
         entries[self.current_tipo_cliente.get()].focus_set()
         
-        # Buttons
+        # Buttons - always at the bottom
         button_frame = tk.Frame(popup)
-        button_frame.pack(pady=10)
+        button_frame.pack(side="bottom", fill="x", pady=10)
         
         tk.Button(button_frame, text="Guardar", 
                  command=lambda: self.insert_new_prices(popup, product_id, entries), 
@@ -327,6 +350,7 @@ class PriceEditorApp:
                         return
             
             self.conn.commit()
+            self.changes_made = False  # Reset changes flag after successful save
             self.status_var.set("Precios establecidos correctamente")
             popup.destroy()
             self.load_products()
@@ -351,6 +375,7 @@ class PriceEditorApp:
             self.cursor.execute("UPDATE precio SET precio = %s WHERE id_precio = %s", (new_price, price_id))
             self.conn.commit()
             
+            self.changes_made = False  # Reset changes flag after successful save
             self.status_var.set(f"Precio actualizado para {values[1]}")
             popup.destroy()
             
@@ -364,7 +389,7 @@ class PriceEditorApp:
         # Create popup for adding new product
         popup = tk.Toplevel(self.root)
         popup.title("Agregar Nuevo Producto")
-        popup.geometry("450x300")
+        popup.geometry("450x400")
         popup.transient(self.root)
         popup.grab_set()
         
@@ -376,11 +401,15 @@ class PriceEditorApp:
         y = (popup.winfo_screenheight() // 2) - (height // 2)
         popup.geometry('{}x{}+{}+{}'.format(width, height, x, y))
         
+        # Create main frame to organize content
+        main_frame = tk.Frame(popup)
+        main_frame.pack(fill="both", expand=True)
+        
         # Product info fields
-        tk.Label(popup, text="Agregar Nuevo Producto", font=("Arial", 14, "bold")).pack(pady=10)
+        tk.Label(main_frame, text="Agregar Nuevo Producto", font=("Arial", 14, "bold")).pack(pady=10)
         
         # Name field
-        name_frame = tk.Frame(popup)
+        name_frame = tk.Frame(main_frame)
         name_frame.pack(fill="x", pady=5, padx=20)
         tk.Label(name_frame, text="Nombre del Producto:", width=20, anchor="w").pack(side="left")
         name_entry = tk.Entry(name_frame, width=30)
@@ -388,7 +417,7 @@ class PriceEditorApp:
         name_entry.focus_set()
         
         # Unit field
-        unit_frame = tk.Frame(popup)
+        unit_frame = tk.Frame(main_frame)
         unit_frame.pack(fill="x", pady=5, padx=20)
         tk.Label(unit_frame, text="Unidad:", width=20, anchor="w").pack(side="left")
         
@@ -398,9 +427,13 @@ class PriceEditorApp:
         unit_combo = ttk.Combobox(unit_frame, textvariable=unit_var, values=common_units)
         unit_combo.pack(side="left", padx=5, fill="x", expand=True)
         
-        # Price fields for each customer type
-        price_label_frame = tk.LabelFrame(popup, text="Precios por Tipo de Cliente", padx=10, pady=5)
-        price_label_frame.pack(fill="x", pady=10, padx=20)
+        # Create a frame with fixed height for price entries
+        price_container = tk.Frame(main_frame)
+        price_container.pack(fill="x", padx=20, pady=5)
+        
+        # Label frame for prices with fixed height
+        price_label_frame = tk.LabelFrame(price_container, text="Precios por Tipo de Cliente", padx=10, pady=5)
+        price_label_frame.pack(fill="x")
         
         # Get all customer types
         self.cursor.execute("SELECT id_tipo, nombre FROM tipo_cliente")
@@ -412,15 +445,16 @@ class PriceEditorApp:
             price_frame = tk.Frame(price_label_frame)
             price_frame.pack(fill="x", pady=2)
             
-            tk.Label(price_frame, text=f"Precio {tipo['nombre']}:").pack(side="left")
+            tk.Label(price_frame, text=f"Precio {tipo['nombre']}:", width=15, anchor="w").pack(side="left")
             tk.Label(price_frame, text="$").pack(side="left")
             price_entry = tk.Entry(price_frame, width=10)
             price_entry.pack(side="left", padx=5)
             price_entries[tipo['id_tipo']] = price_entry
         
-        # Buttons
+        # Buttons - in a separate frame that's packed at the bottom
+        # This is key to ensure buttons are always visible
         button_frame = tk.Frame(popup)
-        button_frame.pack(pady=15)
+        button_frame.pack(side="bottom", fill="x", pady=15)
         
         tk.Button(button_frame, text="Guardar Producto", 
                  command=lambda: self.save_new_product(popup, name_entry.get(), unit_var.get(), price_entries), 
@@ -471,6 +505,7 @@ class PriceEditorApp:
             
             # Commit changes
             self.conn.commit()
+            self.changes_made = False  # Reset changes flag after successful save
             
             messagebox.showinfo("Éxito", f"Producto '{name}' agregado correctamente")
             self.status_var.set(f"Producto '{name}' agregado correctamente")
@@ -529,6 +564,7 @@ class PriceEditorApp:
             
             # Commit changes
             self.conn.commit()
+            self.changes_made = False  # Reset changes flag after successful save
             
             messagebox.showinfo("Éxito", f"Producto '{product_name}' eliminado correctamente")
             self.status_var.set(f"Producto '{product_name}' eliminado correctamente")
@@ -543,6 +579,7 @@ class PriceEditorApp:
     def save_all_changes(self):
         try:
             self.conn.commit()
+            self.changes_made = False  # Reset changes flag after successful save
             messagebox.showinfo("Éxito", "Todos los cambios han sido guardados")
             self.status_var.set("Todos los cambios guardados exitosamente")
         except Exception as e:
@@ -551,11 +588,8 @@ class PriceEditorApp:
             
     def on_closing(self):
         try:
-            # Check if there are uncommitted changes
-            self.cursor.execute("SELECT @@autocommit")
-            autocommit = self.cursor.fetchone()
-            
-            if autocommit and autocommit.get('@@autocommit', 1) == 0:
+            # Only ask if there are unsaved changes
+            if self.changes_made:
                 if messagebox.askyesno("Salir", "¿Hay cambios sin guardar. ¿Deseas guardarlos antes de salir?"):
                     self.save_all_changes()
         except:
