@@ -151,7 +151,7 @@ class ReciboApp:
         pdf.cell(30, 10, f"${total_general:.2f}", 1)
 
         # Guardar factura en la base de datos si se desea implementar en el futuro
-        # self.guardar_factura(productos_finales)
+        self.guardar_factura(productos_finales)
 
         pdf.output(nombre_archivo)
 

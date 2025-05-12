@@ -55,3 +55,14 @@ CREATE TABLE detalle_factura (
     FOREIGN KEY (id_factura) REFERENCES factura(id_factura),
     FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
 );
+
+-- Tabla COMPRA
+
+CREATE TABLE compra (
+    id_compra INT AUTO_INCREMENT PRIMARY KEY,
+    fecha DATE NOT NULL,
+    id_producto INT NOT NULL,
+    cantidad DECIMAL(10,2) NOT NULL,
+    precio_unitario_compra DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
+);
