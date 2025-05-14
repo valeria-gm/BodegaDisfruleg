@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import networkx as nx
+from matplotlib.ticker import FuncFormatter
+from collections import defaultdict
 
 class AnalisisGananciasApp:
     def __init__(self, root):
@@ -16,8 +19,12 @@ class AnalisisGananciasApp:
         self.root.geometry("1000x700")
         
         # Connect to database
-        self.conn = conectar()
-        self.cursor = self.conn.cursor(dictionary=True)
+        try:
+            self.conn = conectar()
+            self.cursor = self.conn.cursor(dictionary=True)
+        except mysql.connector.Error as err:
+            messagebox.showerror("Error de conexión", f"No se pudo conectar a la base de datos:\n{err}")
+            self.root.destroy()
         
         self.create_interface()
         self.load_analysis()
@@ -43,6 +50,9 @@ class AnalisisGananciasApp:
         tk.Button(button_frame, text="Ver Gráfico", command=self.show_chart, 
                   bg="#FF5722", fg="white", padx=10, pady=3).pack(side="left", padx=5)
         
+        tk.Button(button_frame, text="Estadísticas Avanzadas", command=self.show_advanced_stats,
+                  bg="#9C27B0", fg="white", padx=10, pady=3).pack(side="left", padx=5)
+
         # Create main container with two sections
         main_container = tk.Frame(self.root)
         main_container.pack(fill="both", expand=True, padx=10, pady=10)
@@ -177,7 +187,7 @@ class AnalisisGananciasApp:
                     
                     -- Ventas
                     COALESCE(SUM(df.cantidad), 0) as cantidad_vendida,
-                    COALESCE(AVG(df.precio_unitario_compra), 0) as precio_promedio_venta,
+                    COALESCE(AVG(df.precio_unitario_venta), 0) as precio_promedio_venta,
                     COALESCE(SUM(df.subtotal), 0) as ingresos_totales,
                     
                     -- Compras
@@ -401,6 +411,451 @@ class AnalisisGananciasApp:
         canvas = FigureCanvasTkAgg(fig, chart_window)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def show_advanced_stats(self):
+        """Muestra estadísticas avanzadas con visualizaciones interactivas."""
+        
+        class StatsWindow:
+            def __init__(self, parent, db_cursor, db_connection):
+                self.parent = parent
+                self.cursor = db_cursor
+                self.conn = db_connection
+                self.window = tk.Toplevel(parent)
+                self.window.title("Estadísticas Avanzadas - Disfruleg")
+                self.window.geometry("1200x850")
+                self.window.protocol("WM_DELETE_WINDOW", self.cleanup)
+                
+                # Configuración de estilo
+                self.style = ttk.Style()
+                self.style.configure("TNotebook.Tab", font=('Arial', 10, 'bold'))
+                
+                self.setup_ui()
+                self.load_data()
+                
+            def convert_decimal(self, value):
+                """Convierte valores Decimal de MySQL a float para matplotlib."""
+                if value is None:
+                    return 0.0
+                return float(value)
+                
+            def setup_ui(self):
+                """Configura la interfaz de usuario principal."""
+                self.notebook = ttk.Notebook(self.window)
+                self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+                
+                # Pestañas principales
+                self.tabs = {
+                    "sales": self.create_tab("Ventas por Producto"),
+                    "profits": self.create_tab("Ganancias"),
+                    "temporal": self.create_tab("Tendencias Temporales"),
+                    "clients": self.create_tab("Clientes")
+                }
+                
+                # Barra de estado
+                self.status_var = tk.StringVar()
+                self.status_bar = ttk.Label(
+                    self.window, 
+                    textvariable=self.status_var,
+                    relief="sunken",
+                    anchor="w"
+                )
+                self.status_bar.pack(side="bottom", fill="x")
+                
+            def create_tab(self, name):
+                """Crea una pestaña con contenedor para gráficos."""
+                frame = ttk.Frame(self.notebook)
+                self.notebook.add(frame, text=name)
+                
+                container = ttk.Frame(frame)
+                container.pack(fill="both", expand=True)
+                
+                return {
+                    "frame": frame,
+                    "container": container,
+                    "current_figure": None
+                }
+                
+            def load_data(self):
+                """Carga los datos y genera visualizaciones."""
+                self.status_var.set("Cargando datos...")
+                self.window.update_idletasks()
+                
+                try:
+                    # Cargar datos en segundo plano para no bloquear la UI
+                    self.window.after(100, self.generate_all_charts)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Error al cargar datos: {str(e)}")
+                    self.window.destroy()
+                    
+            def generate_all_charts(self):
+                """Genera todas las visualizaciones."""
+                try:
+                    self.generate_sales_chart()
+                    self.generate_profits_chart()
+                    self.generate_temporal_chart()
+                    self.generate_clients_chart()
+                    self.status_var.set("Listo")
+                except Exception as e:
+                    self.status_var.set(f"Error: {str(e)}")
+                    messagebox.showerror("Error", f"No se pudieron generar todos los gráficos: {str(e)}")
+                    
+            def generate_sales_chart(self):
+                """Genera gráfico de ventas por producto."""
+                try:
+                    self.cursor.execute("""
+                        SELECT 
+                            p.nombre_producto,
+                            COALESCE(SUM(df.cantidad), 0) AS total_vendido
+                        FROM producto p
+                        LEFT JOIN detalle_factura df ON p.id_producto = df.id_producto
+                        GROUP BY p.id_producto
+                        ORDER BY total_vendido DESC
+                        LIMIT 15
+                    """)
+                    top_products = self.cursor.fetchall()
+                    
+                    # Consulta para productos no vendidos
+                    self.cursor.execute("""
+                        SELECT 
+                            p.nombre_producto,
+                            0 AS total_vendido
+                        FROM producto p
+                        LEFT JOIN detalle_factura df ON p.id_producto = df.id_producto
+                        WHERE df.id_producto IS NULL
+                        LIMIT 15
+                    """)
+                    not_sold_products = self.cursor.fetchall()
+                    
+                    if not top_products and not not_sold_products:
+                        self.show_no_data_message(self.tabs["sales"]["container"])
+                        return
+                    
+                    # Combinar datos para mostrar
+                    all_products = top_products + not_sold_products
+                    
+                    fig, ax = plt.subplots(figsize=(12, 8))
+                    
+                    # Solo mostramos los más vendidos en el gráfico principal
+                    if top_products:
+                        # Convertir valores Decimal a float
+                        valores = [self.convert_decimal(p['total_vendido']) for p in top_products]
+                        
+                        bars = ax.barh(
+                            [p['nombre_producto'][:25] + ('...' if len(p['nombre_producto']) > 25 else '') 
+                            for p in top_products],
+                            valores,
+                            color='#4CAF50'
+                        )
+                        ax.set_title('Top 15 Productos Más Vendidos\n(Incluye productos no vendidos en la tabla)')
+                        ax.set_xlabel("Cantidad Vendida")
+                        
+                        # Añadir etiquetas de valor
+                        max_val = max(valores) if valores else 0
+                        for bar, cantidad in zip(bars, valores):
+                            width = bar.get_width()
+                            ax.text(width + (max_val * 0.02),
+                                bar.get_y() + bar.get_height()/2,
+                                f"{int(cantidad)}",
+                                va='center', ha='left', fontsize=9)
+                    
+                    # Mostrar tabla con productos no vendidos
+                    if not_sold_products:
+                        # Crear tabla debajo del gráfico
+                        table_data = [["Productos no vendidos", "Cantidad"]] + \
+                                    [[p['nombre_producto'][:30] + ('...' if len(p['nombre_producto']) > 30 else ''), 
+                                    p['total_vendido']] for p in not_sold_products]
+                        
+                        table = ax.table(cellText=table_data,
+                                    loc='bottom',
+                                    colWidths=[0.7, 0.3],
+                                    cellLoc='center')
+                        
+                        # Ajustar posición del gráfico para hacer espacio para la tabla
+                        plt.subplots_adjust(bottom=0.3)
+                        
+                        # Formatear tabla
+                        table.auto_set_font_size(False)
+                        table.set_fontsize(9)
+                        table.scale(1, 1.5)
+                    
+                    plt.tight_layout()
+                    self.embed_plot(fig, self.tabs["sales"]["container"])
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["sales"]["container"], str(e))
+                    
+            def generate_profits_chart(self):
+                """Genera gráfico de ganancias por producto."""
+                try:
+                    self.cursor.execute("""
+                        SELECT 
+                            p.nombre_producto,
+                            SUM(df.subtotal) - COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0) AS ganancia
+                        FROM producto p
+                        LEFT JOIN detalle_factura df ON df.id_producto = p.id_producto
+                        LEFT JOIN compra c ON c.id_producto = p.id_producto
+                        GROUP BY p.id_producto
+                        HAVING ganancia IS NOT NULL
+                        ORDER BY ganancia DESC
+                        LIMIT 20
+                    """)
+                    data = self.cursor.fetchall()
+                
+                    if not data:
+                        self.show_no_data_message(self.tabs["profits"]["container"])
+                        return
+                    
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    
+                    # Formateador para valores monetarios
+                    formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
+                    ax.xaxis.set_major_formatter(formatter)
+                    
+                    # Convertir valores Decimal a float
+                    ganancias = [self.convert_decimal(p['ganancia']) for p in data]
+                    
+                    # Solo mostrar nombres cortos
+                    product_names = [p['nombre_producto'][:20] + ('...' if len(p['nombre_producto']) > 20 else '') 
+                                for p in data]
+                    
+                    bars = ax.barh(product_names, ganancias, color='#2196F3')
+                    ax.set_title("Ganancia por Producto (Top 20)")
+                    ax.set_xlabel("Ganancia Total")
+                    
+                    # Añadir etiquetas de valor
+                    max_val = max(abs(g) for g in ganancias) if ganancias else 0
+                    for bar, ganancia in zip(bars, ganancias):
+                        width = bar.get_width()
+                        ax.text(width + (max_val * 0.02),
+                            bar.get_y() + bar.get_height()/2,
+                            f"${ganancia:,.2f}",
+                            va='center', ha='left', fontsize=8)
+                    
+                    plt.tight_layout()
+                    self.embed_plot(fig, self.tabs["profits"]["container"])
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["profits"]["container"], str(e))
+                    
+            def generate_temporal_chart(self):
+                """Genera gráfico temporal con selector de período."""
+                try:
+                    frame = self.tabs["temporal"]["frame"]
+                    
+                    # Frame de controles
+                    control_frame = ttk.Frame(frame)
+                    control_frame.pack(fill="x", padx=10, pady=5)
+                    
+                    ttk.Label(control_frame, text="Agrupar por:").pack(side="left")
+                    
+                    self.time_var = tk.StringVar(value="Mes")
+                    options = {
+                        "Día": "day",
+                        "Semana": "week",
+                        "Mes": "month",
+                        "Trimestre": "quarter",
+                        "Año": "year"
+                    }
+                    
+                    combo = ttk.Combobox(
+                        control_frame,
+                        textvariable=self.time_var,
+                        values=list(options.keys()),
+                        state="readonly"
+                    )
+                    combo.pack(side="left", padx=5)
+                    combo.bind("<<ComboboxSelected>>", self.update_temporal_chart)
+                    
+                    # Frame del gráfico
+                    self.tabs["temporal"]["graph_frame"] = ttk.Frame(frame)
+                    self.tabs["temporal"]["graph_frame"].pack(fill="both", expand=True)
+                    
+                    self.update_temporal_chart()
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["temporal"]["container"], str(e))
+                    
+            def update_temporal_chart(self, event=None):
+                """Actualiza el gráfico temporal según la selección."""
+                try:
+                    period_map = {
+                        "Día": ("DATE(f.fecha)", "Fecha"),
+                        "Semana": ("DATE_FORMAT(f.fecha, '%Y-%U')", "Semana"),
+                        "Mes": ("DATE_FORMAT(f.fecha, '%Y-%m')", "Mes"),
+                        "Trimestre": ("CONCAT(YEAR(f.fecha), '-Q', QUARTER(f.fecha))", "Trimestre"),
+                        "Año": ("YEAR(f.fecha)", "Año")
+                    }
+                    
+                    selected = self.time_var.get()
+                    period_func, period_label = period_map.get(selected, period_map["Mes"])
+                    
+                    self.cursor.execute(f"""
+                        SELECT 
+                            {period_func} AS periodo,
+                            SUM(df.subtotal) AS ganancia
+                        FROM factura f
+                        JOIN detalle_factura df ON df.id_factura = f.id_factura
+                        GROUP BY periodo
+                        ORDER BY periodo
+                    """)
+                    data = self.cursor.fetchall()
+                    
+                    if not data:
+                        self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
+                        return
+                    
+                    fig, ax = plt.subplots(figsize=(12, 5))
+                    
+                    # Formateador para valores monetarios
+                    formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
+                    ax.yaxis.set_major_formatter(formatter)
+                    
+                    periods = [str(d['periodo']) for d in data]
+                    # Convertir valores Decimal a float
+                    values = [self.convert_decimal(d['ganancia']) for d in data]
+                    
+                    # Gráfico de línea con marcadores
+                    line = ax.plot(periods, values, marker='o', color='#9C27B0', linewidth=2)
+                    ax.set_title(f"Ganancias por {period_label}")
+                    ax.set_ylabel("Ganancia")
+                    ax.set_xlabel(period_label)
+                    ax.grid(True, linestyle='--', alpha=0.6)
+                    
+                    # Rotar etiquetas si hay muchas
+                    if len(periods) > 8:
+                        plt.xticks(rotation=45, ha='right')
+                    
+                    # Añadir etiquetas de valor a los puntos
+                    max_val = max(values) if values else 0
+                    for i, (period, value) in enumerate(zip(periods, values)):
+                        ax.text(i, value + (max_val * 0.05), 
+                            f"${value:,.2f}", 
+                            ha='center', va='bottom', fontsize=8)
+                    
+                    plt.tight_layout()
+                    self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["temporal"]["graph_frame"], str(e))
+                    
+            def generate_clients_chart(self):
+                """Genera gráfico de ventas por cliente."""
+                try:
+                    self.cursor.execute("""
+                        SELECT 
+                            c.nombre,
+                            SUM(df.subtotal) AS total_vendido
+                        FROM cliente c
+                        JOIN factura f ON f.id_cliente = c.id_cliente
+                        JOIN detalle_factura df ON df.id_factura = f.id_factura
+                        GROUP BY c.id_cliente
+                        ORDER BY total_vendido DESC
+                        LIMIT 15
+                    """)
+                    data = self.cursor.fetchall()
+                    
+                    if not data:
+                        self.show_no_data_message(self.tabs["clients"]["container"])
+                        return
+                    
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    
+                    # Formateador para valores monetarios
+                    formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
+                    ax.yaxis.set_major_formatter(formatter)
+                    
+                    clients = [d['nombre'][:20] + ('...' if len(d['nombre']) > 20 else '') for d in data]
+                    # Convertir valores Decimal a float
+                    amounts = [self.convert_decimal(d['total_vendido']) for d in data]
+                    
+                    bars = ax.bar(clients, amounts, color='#FF9800')
+                    ax.set_title("Ventas por Cliente (Top 15)")
+                    ax.set_ylabel("Total Vendido")
+                    
+                    # Añadir etiquetas de valor
+                    for bar, amount in zip(bars, amounts):
+                        height = bar.get_height()
+                        ax.text(
+                            bar.get_x() + bar.get_width()/2., height,
+                            f"${amount:,.2f}",
+                            ha='center', va='bottom',
+                            fontsize=8
+                        )
+                    
+                    plt.xticks(rotation=45, ha='right')
+                    plt.tight_layout()
+                    self.embed_plot(fig, self.tabs["clients"]["container"])
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["clients"]["container"], str(e))
+                    
+            def embed_plot(self, fig, container):
+                """Inserta un gráfico matplotlib en el frame especificado."""
+                for widget in container.winfo_children():
+                    widget.destroy()
+                    
+                try:
+                    canvas = FigureCanvasTkAgg(fig, master=container)
+                    canvas.draw()
+                    canvas.get_tk_widget().pack(fill="both", expand=True)
+                    
+                    # Añadir barra de herramientas
+                    from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+                    toolbar = NavigationToolbar2Tk(canvas, container)
+                    toolbar.update()
+                    canvas.get_tk_widget().pack(fill="both", expand=True)
+                    
+                    # Guardar referencia para evitar garbage collection
+                    if hasattr(self, 'current_figure'):
+                        # Cerrar la figura anterior si existe
+                        old_fig, old_canvas, old_toolbar = self.current_figure
+                        plt.close(old_fig)
+                    
+                    self.current_figure = (fig, canvas, toolbar)
+                    
+                except Exception as e:
+                    self.show_error_message(container, f"Error al mostrar gráfico: {str(e)}")
+                    
+            def show_no_data_message(self, container):
+                """Muestra mensaje cuando no hay datos disponibles."""
+                for widget in container.winfo_children():
+                    widget.destroy()
+                    
+                label = ttk.Label(
+                    container,
+                    text="No hay datos disponibles para esta visualización",
+                    font=('Arial', 10, 'italic'),
+                    foreground='gray'
+                )
+                label.pack(expand=True)
+                
+            def show_error_message(self, container, error):
+                """Muestra mensaje de error."""
+                for widget in container.winfo_children():
+                    widget.destroy()
+                    
+                label = ttk.Label(
+                    container,
+                    text=f"Error: {error}",
+                    font=('Arial', 10),
+                    foreground='red'
+                )
+                label.pack(expand=True)
+                
+            def cleanup(self):
+                """Limpia recursos antes de cerrar la ventana."""
+                try:
+                    if hasattr(self, 'current_figure'):
+                        fig, canvas, toolbar = self.current_figure
+                        plt.close(fig)
+                    
+                    self.window.destroy()
+                except Exception as e:
+                    print(f"Error durante cleanup: {e}")
+                    self.window.destroy()
+        
+        # Crear e iniciar la ventana de estadísticas
+        StatsWindow(self.root, self.cursor, self.conn)
     
     def export_to_pdf(self):
         """Export analysis to PDF"""
@@ -408,7 +863,7 @@ class AnalisisGananciasApp:
         # For now, just show a message
         messagebox.showinfo("Export", "Función de exportación a PDF pendiente de implementar.\n"
                           "Puedes usar Ctrl+P para imprimir la pantalla actual.")
-    
+
     def on_closing(self):
         """Clean up and close connection when closing the app"""
         try:
@@ -416,6 +871,7 @@ class AnalisisGananciasApp:
         except:
             pass
         self.root.destroy()
+
 
 if __name__ == "__main__":
     root = tk.Tk()

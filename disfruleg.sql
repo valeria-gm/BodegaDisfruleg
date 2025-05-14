@@ -32,8 +32,9 @@ CREATE TABLE precio (
     id_producto INT NOT NULL,
     id_tipo INT NOT NULL,
     precio DECIMAL(10,2) NOT NULL,
-    FOREIGN KEY (id_producto) REFERENCES producto(id_producto),
-    FOREIGN KEY (id_tipo) REFERENCES tipo_cliente(id_tipo)
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_producto) REFERENCES producto(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_tipo) REFERENCES tipo_cliente(id_tipo) ON DELETE CASCADE
 );
 
 -- Tabla FACTURA
@@ -50,14 +51,13 @@ CREATE TABLE detalle_factura (
     id_factura INT NOT NULL,
     id_producto INT NOT NULL,
     cantidad DECIMAL(10,2) NOT NULL,
-    precio_unitario_compra DECIMAL(10,2) NOT NULL,
-    subtotal DECIMAL(10,2) GENERATED ALWAYS AS (cantidad * precio_unitario_compra) STORED,
+    precio_unitario_venta DECIMAL(10,2) NOT NULL,
+    subtotal DECIMAL(10,2) GENERATED ALWAYS AS (cantidad * precio_unitario_venta) STORED,
     FOREIGN KEY (id_factura) REFERENCES factura(id_factura),
     FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
 );
 
 -- Tabla COMPRA
-
 CREATE TABLE compra (
     id_compra INT AUTO_INCREMENT PRIMARY KEY,
     fecha DATE NOT NULL,
@@ -66,3 +66,4 @@ CREATE TABLE compra (
     precio_unitario_compra DECIMAL(10,2) NOT NULL,
     FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
 );
+

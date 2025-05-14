@@ -5,7 +5,7 @@ from fpdf import FPDF
 from datetime import datetime
 import mysql.connector
 from conexion import conectar
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 conn = conectar()
 cursor = conn.cursor(dictionary=True)
@@ -164,13 +164,13 @@ class ReciboApp:
     def calcular_subtotal(self, event, producto, subtotal_label):
         """Calcular subtotal para un producto"""
         try:
-            cantidad = float(event.widget.get()) if event.widget.get() else 0
+            cantidad = Decimal(event.widget.get()) if event.widget.get() else Decimal('0')
             subtotal = cantidad * producto["precio"]
             subtotal_label.config(text=f"${subtotal:.2f}")
             
             # Actualizar total general
             self.calcular_total_general()
-        except ValueError:
+        except (ValueError, InvalidOperation):
             subtotal_label.config(text="$0.00")
 
     def calcular_total_general(self):
@@ -180,7 +180,7 @@ class ReciboApp:
         
         for producto_id, (producto, entry, subtotal_label) in self.entries_cantidades.items():
             try:
-                cantidad = float(entry.get()) if entry.get() else 0
+                cantidad = Decimal(entry.get()) if entry.get() else Decimal('0')
                 if cantidad > 0:
                     productos_con_cantidad += 1
                     total_general += cantidad * producto["precio"]
@@ -290,7 +290,7 @@ class ReciboApp:
                 producto = cursor.fetchone()
                 if producto:
                     cursor.execute(
-                        "INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_compra) VALUES (%s, %s, %s, %s)",
+                        "INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_venta) VALUES (%s, %s, %s, %s)",
                         (factura_id, producto["id_producto"], cantidad, precio_unitario)
                     )
             

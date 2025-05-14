@@ -73,7 +73,7 @@ INSERT INTO factura (fecha, id_cliente) VALUES
 ('2025-04-27', 2);
 
 -- Detalles para factura 1
-INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_compra) VALUES
+INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_venta) VALUES
 (1, 1, 1.0, 55.00),     -- Col morado
 (1, 2, 0.5, 49.00),     -- Huevo
 (1, 3, 2.0, 46.00),     -- Jitomate bola
@@ -84,7 +84,7 @@ INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_
 (1, 8, 1.6, 22.00);     -- Apio
 
 -- Detalles para factura 2
-INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_compra) VALUES
+INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_venta) VALUES
 (2, 9, 1.0, 85.00),     -- Chorizo
 (2, 10, 2.0, 99.00),    -- Bistec de puerco
 (2, 11, 0.5, 135.00),   -- Tocino
@@ -92,3 +92,77 @@ INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_
 (2, 13, 1.8, 7.00),     -- Sandía
 (2, 14, 1.0, 39.00);    -- Frambuesa
 
+
+-- Factura 3: María López (Restaurante, id_cliente = 3)
+INSERT INTO factura (fecha, id_cliente) VALUES
+('2025-05-02', 3);
+
+INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_venta) VALUES
+(3, 2, 3.0, 42.00),     -- Huevo
+(3, 5, 2.0, 45.00),     -- Rábano rojo
+(3, 8, 2.5, 18.00),     -- Apio
+(3, 13, 1.0, 17.00);    -- Sandía
+
+-- Factura 4: Ana Pérez (Regular, id_cliente = 1)
+INSERT INTO factura (fecha, id_cliente) VALUES
+('2025-05-03', 1);
+
+INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_venta) VALUES
+(4, 6, 5.0, 35.50),     -- Frijol
+(4, 10, 1.5, 119.00),   -- Bistec de puerco
+(4, 12, 1.0, 155.00),   -- Queso Oaxaca
+(4, 14, 0.5, 53.00);    -- Frambuesa
+
+-- Factura 5: Luis Gómez (Ejército, id_cliente = 2)
+INSERT INTO factura (fecha, id_cliente) VALUES
+('2025-05-04', 2);
+
+INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_venta) VALUES
+(5, 1, 2.0, 40.00),     -- Col morado
+(5, 3, 1.5, 33.00),     -- Jitomate bola
+(5, 4, 0.5, 65.00),     -- Chile habanero
+(5, 7, 4.0, 12.00);     -- Jitomate
+
+-- Compras simuladas (fecha, id_producto, cantidad, precio_unitario_compra)
+INSERT INTO compra (fecha, id_producto, cantidad, precio_unitario_compra) VALUES
+('2025-05-01', 1, 10.0, 45.00),
+('2025-05-10', 1, 8.0, 47.00),
+
+('2025-05-01', 2, 15.0, 40.00),
+('2025-05-10', 2, 12.0, 42.00),
+
+('2025-05-01', 3, 20.0, 38.00),
+('2025-05-10', 3, 18.0, 40.00),
+
+('2025-05-01', 4, 5.0, 65.00),
+('2025-05-10', 4, 4.0, 68.00),
+
+('2025-05-01', 5, 10.0, 40.00),
+('2025-05-10', 5, 10.0, 42.00),
+
+('2025-05-01', 6, 25.0, 28.00),
+('2025-05-10', 6, 20.0, 29.00),
+
+('2025-05-01', 7, 30.0, 22.00),
+('2025-05-10', 7, 25.0, 24.00),
+
+('2025-05-01', 8, 15.0, 15.00),
+('2025-05-10', 8, 10.0, 16.00),
+
+('2025-05-01', 9, 8.0, 85.00),
+('2025-05-10', 9, 5.0, 88.00),
+
+('2025-05-01', 10, 5.0, 100.00),
+('2025-05-10', 10, 3.0, 105.00),
+
+('2025-05-01', 11, 4.0, 130.00),
+('2025-05-10', 11, 3.0, 135.00),
+
+('2025-05-01', 12, 6.0, 130.00),
+('2025-05-10', 12, 5.0, 132.00),
+
+('2025-05-01', 13, 10.0, 15.00),
+('2025-05-10', 13, 8.0, 16.00),
+
+('2025-05-01', 14, 8.0, 40.00),
+('2025-05-10', 14, 6.0, 42.00);
