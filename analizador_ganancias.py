@@ -8,9 +8,14 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import networkx as nx
 from matplotlib.ticker import FuncFormatter
 from collections import defaultdict
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from datetime import datetime
 
 class AnalisisGananciasApp:
     def __init__(self, root):
@@ -47,8 +52,8 @@ class AnalisisGananciasApp:
         tk.Button(button_frame, text="Exportar PDF", command=self.export_to_pdf, 
                   bg="#2196F3", fg="white", padx=10, pady=3).pack(side="left", padx=5)
         
-        tk.Button(button_frame, text="Ver Gráfico", command=self.show_chart, 
-                  bg="#FF5722", fg="white", padx=10, pady=3).pack(side="left", padx=5)
+        #tk.Button(button_frame, text="Ver Gráfico", command=self.show_chart, 
+                  #bg="#FF5722", fg="white", padx=10, pady=3).pack(side="left", padx=5)
         
         tk.Button(button_frame, text="Estadísticas Avanzadas", command=self.show_advanced_stats,
                   bg="#9C27B0", fg="white", padx=10, pady=3).pack(side="left", padx=5)
@@ -353,64 +358,6 @@ class AnalisisGananciasApp:
                     f"{product['margen_ganancia_porcentaje']:.1f}%",
                     f"{stock:.2f}"
                 ), tags=tags)
-    
-    def show_chart(self):
-        """Show charts in a new window"""
-        chart_window = tk.Toplevel(self.root)
-        chart_window.title("Gráficos de Análisis")
-        chart_window.geometry("800x600")
-        
-        # Create figure
-        fig = Figure(figsize=(12, 8))
-        
-        # Top 10 most profitable products
-        ax1 = fig.add_subplot(2, 1, 1)
-        profitable_products = sorted([p for p in self.all_products if p['ganancia_total'] > 0],
-                                   key=lambda x: x['ganancia_total'], reverse=True)[:10]
-        
-        if profitable_products:
-            names = [p['nombre_producto'][:15] + '...' if len(p['nombre_producto']) > 15 
-                    else p['nombre_producto'] for p in profitable_products]
-            ganancias = [p['ganancia_total'] for p in profitable_products]
-            
-            bars = ax1.bar(names, ganancias, color='#4CAF50')
-            ax1.set_title('Top 10 Productos Más Rentables')
-            ax1.set_ylabel('Ganancia ($)')
-            ax1.tick_params(axis='x', rotation=45)
-            
-            # Add value labels on bars
-            for bar, ganancia in zip(bars, ganancias):
-                height = bar.get_height()
-                ax1.text(bar.get_x() + bar.get_width()/2., height,
-                        f'${ganancia:.0f}', ha='center', va='bottom')
-        
-        # Products with losses
-        ax2 = fig.add_subplot(2, 1, 2)
-        loss_products = sorted([p for p in self.all_products if p['ganancia_total'] < 0],
-                              key=lambda x: x['ganancia_total'])[:10]
-        
-        if loss_products:
-            names = [p['nombre_producto'][:15] + '...' if len(p['nombre_producto']) > 15 
-                    else p['nombre_producto'] for p in loss_products]
-            perdidas = [abs(p['ganancia_total']) for p in loss_products]
-            
-            bars = ax2.bar(names, perdidas, color='#f44336')
-            ax2.set_title('Top 10 Productos con Mayor Pérdida')
-            ax2.set_ylabel('Pérdida ($)')
-            ax2.tick_params(axis='x', rotation=45)
-            
-            # Add value labels on bars
-            for bar, perdida in zip(bars, perdidas):
-                height = bar.get_height()
-                ax2.text(bar.get_x() + bar.get_width()/2., height,
-                        f'${perdida:.0f}', ha='center', va='bottom')
-        
-        plt.tight_layout()
-        
-        # Embed chart in tkinter window
-        canvas = FigureCanvasTkAgg(fig, chart_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def show_advanced_stats(self):
         """Muestra estadísticas avanzadas con visualizaciones interactivas."""
@@ -431,6 +378,14 @@ class AnalisisGananciasApp:
                 
                 self.setup_ui()
                 self.load_data()
+
+            def ensure_decimal(self, value):
+                """Asegura que el valor sea Decimal, convirtiéndolo si es necesario."""
+                if value is None:
+                    return Decimal('0.0')
+                if isinstance(value, Decimal):
+                    return value
+                return Decimal(str(value))
                 
             def convert_decimal(self, value):
                 """Convierte valores Decimal de MySQL a float para matplotlib."""
@@ -445,7 +400,7 @@ class AnalisisGananciasApp:
                 
                 # Pestañas principales
                 self.tabs = {
-                    "sales": self.create_tab("Ventas por Producto"),
+                    "sales": self.create_tab("Ventas y Pérdidas por Producto"),
                     "profits": self.create_tab("Ganancias"),
                     "temporal": self.create_tab("Tendencias Temporales"),
                     "clients": self.create_tab("Clientes")
@@ -500,101 +455,107 @@ class AnalisisGananciasApp:
                     messagebox.showerror("Error", f"No se pudieron generar todos los gráficos: {str(e)}")
                     
             def generate_sales_chart(self):
-                """Genera gráfico de ventas por producto."""
-                try:
+                 """Genera gráficos de productos rentables y con pérdidas."""
+                 try:
+                    # Obtener todos los productos con sus ganancias
                     self.cursor.execute("""
                         SELECT 
                             p.nombre_producto,
-                            COALESCE(SUM(df.cantidad), 0) AS total_vendido
+                            COALESCE(SUM(df.subtotal), 0) - COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0) AS ganancia_total
                         FROM producto p
-                        LEFT JOIN detalle_factura df ON p.id_producto = df.id_producto
-                        GROUP BY p.id_producto
-                        ORDER BY total_vendido DESC
-                        LIMIT 15
+                        LEFT JOIN detalle_factura df ON df.id_producto = p.id_producto
+                        LEFT JOIN compra c ON c.id_producto = p.id_producto
+                        GROUP BY p.id_producto, p.nombre_producto
+                        HAVING ganancia_total IS NOT NULL
+                        ORDER BY ganancia_total DESC
                     """)
-                    top_products = self.cursor.fetchall()
+                    all_products = self.cursor.fetchall()
                     
-                    # Consulta para productos no vendidos
-                    self.cursor.execute("""
-                        SELECT 
-                            p.nombre_producto,
-                            0 AS total_vendido
-                        FROM producto p
-                        LEFT JOIN detalle_factura df ON p.id_producto = df.id_producto
-                        WHERE df.id_producto IS NULL
-                        LIMIT 15
-                    """)
-                    not_sold_products = self.cursor.fetchall()
+                    # Filtrar productos rentables (top 10)
+                    profitable_products = sorted([p for p in all_products if p['ganancia_total'] > 0],
+                                            key=lambda x: x['ganancia_total'], reverse=True)[:10]
                     
-                    if not top_products and not not_sold_products:
+                    # Filtrar productos con pérdidas (top 10)
+                    loss_products = sorted([p for p in all_products if p['ganancia_total'] < 0],
+                                        key=lambda x: x['ganancia_total'])[:10]
+                    
+                    if not profitable_products and not loss_products:
                         self.show_no_data_message(self.tabs["sales"]["container"])
                         return
                     
-                    # Combinar datos para mostrar
-                    all_products = top_products + not_sold_products
+                    fig = plt.Figure(figsize=(12, 10))
                     
-                    fig, ax = plt.subplots(figsize=(12, 8))
-                    
-                    # Solo mostramos los más vendidos en el gráfico principal
-                    if top_products:
-                        # Convertir valores Decimal a float
-                        valores = [self.convert_decimal(p['total_vendido']) for p in top_products]
+                    # Gráfico de productos rentables
+                    if profitable_products:
+                        ax1 = fig.add_subplot(2, 1, 1)
+                        names = [p['nombre_producto'][:15] + '...' if len(p['nombre_producto']) > 15 
+                                else p['nombre_producto'] for p in profitable_products]
+                        ganancias = [self.ensure_decimal(p['ganancia_total']) for p in profitable_products]
                         
-                        bars = ax.barh(
-                            [p['nombre_producto'][:25] + ('...' if len(p['nombre_producto']) > 25 else '') 
-                            for p in top_products],
-                            valores,
-                            color='#4CAF50'
-                        )
-                        ax.set_title('Top 15 Productos Más Vendidos\n(Incluye productos no vendidos en la tabla)')
-                        ax.set_xlabel("Cantidad Vendida")
+                        bars = ax1.bar(names, ganancias, color='#4CAF50')
+                        ax1.set_title('Top 10 Productos Más Rentables')
+                        ax1.set_ylabel('Ganancia ($)')
+                        ax1.tick_params(axis='x', rotation=45)
                         
                         # Añadir etiquetas de valor
-                        max_val = max(valores) if valores else 0
-                        for bar, cantidad in zip(bars, valores):
-                            width = bar.get_width()
-                            ax.text(width + (max_val * 0.02),
-                                bar.get_y() + bar.get_height()/2,
-                                f"{int(cantidad)}",
-                                va='center', ha='left', fontsize=9)
+                        for bar, ganancia in zip(bars, ganancias):
+                            height = bar.get_height()
+                            ax1.text(bar.get_x() + bar.get_width()/2., height,
+                                    f'${float(ganancia):,.0f}', 
+                                    ha='center', va='bottom')
                     
-                    # Mostrar tabla con productos no vendidos
-                    if not_sold_products:
-                        # Crear tabla debajo del gráfico
-                        table_data = [["Productos no vendidos", "Cantidad"]] + \
-                                    [[p['nombre_producto'][:30] + ('...' if len(p['nombre_producto']) > 30 else ''), 
-                                    p['total_vendido']] for p in not_sold_products]
+                    # Gráfico de productos con pérdidas
+                    if loss_products:
+                        ax2 = fig.add_subplot(2, 1, 2)
+                        names = [p['nombre_producto'][:15] + '...' if len(p['nombre_producto']) > 15 
+                                else p['nombre_producto'] for p in loss_products]
+                        perdidas = [abs(self.ensure_decimal(p['ganancia_total'])) for p in loss_products]
                         
-                        table = ax.table(cellText=table_data,
-                                    loc='bottom',
-                                    colWidths=[0.7, 0.3],
-                                    cellLoc='center')
+                        bars = ax2.bar(names, perdidas, color='#f44336')
+                        ax2.set_title('Top 10 Productos con Mayor Pérdida')
+                        ax2.set_ylabel('Pérdida ($)')
+                        ax2.tick_params(axis='x', rotation=45)
                         
-                        # Ajustar posición del gráfico para hacer espacio para la tabla
-                        plt.subplots_adjust(bottom=0.3)
-                        
-                        # Formatear tabla
-                        table.auto_set_font_size(False)
-                        table.set_fontsize(9)
-                        table.scale(1, 1.5)
+                        # Añadir etiquetas de valor
+                        for bar, perdida in zip(bars, perdidas):
+                            height = bar.get_height()
+                            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                                    f'${float(perdida):,.0f}', 
+                                    ha='center', va='bottom')
                     
                     plt.tight_layout()
                     self.embed_plot(fig, self.tabs["sales"]["container"])
                     
-                except Exception as e:
+                 except Exception as e:
                     self.show_error_message(self.tabs["sales"]["container"], str(e))
-                    
+
             def generate_profits_chart(self):
                 """Genera gráfico de ganancias por producto."""
                 try:
                     self.cursor.execute("""
                         SELECT 
+                            p.id_producto,
                             p.nombre_producto,
-                            SUM(df.subtotal) - COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0) AS ganancia
+                            COALESCE((
+                                SELECT SUM(df.subtotal) 
+                                FROM detalle_factura df 
+                                WHERE df.id_producto = p.id_producto
+                            ), 0) AS total_ventas,
+                            COALESCE((
+                                SELECT SUM(c.cantidad * c.precio_unitario_compra) 
+                                FROM compra c 
+                                WHERE c.id_producto = p.id_producto
+                            ), 0) AS total_compras,
+                            COALESCE((
+                                SELECT SUM(df.subtotal) 
+                                FROM detalle_factura df 
+                                WHERE df.id_producto = p.id_producto
+                            ), 0) - COALESCE((
+                                SELECT SUM(c.cantidad * c.precio_unitario_compra) 
+                                FROM compra c 
+                                WHERE c.id_producto = p.id_producto
+                            ), 0) AS ganancia
                         FROM producto p
-                        LEFT JOIN detalle_factura df ON df.id_producto = p.id_producto
-                        LEFT JOIN compra c ON c.id_producto = p.id_producto
-                        GROUP BY p.id_producto
                         HAVING ganancia IS NOT NULL
                         ORDER BY ganancia DESC
                         LIMIT 20
@@ -611,19 +572,20 @@ class AnalisisGananciasApp:
                     formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
                     ax.xaxis.set_major_formatter(formatter)
                     
-                    # Convertir valores Decimal a float
-                    ganancias = [self.convert_decimal(p['ganancia']) for p in data]
+                    # Convertir valores usando ensure_decimal
+                    ganancias = [self.ensure_decimal(p['ganancia']) for p in data]
+                    nombres = [p['nombre_producto'][:20] + ('...' if len(p['nombre_producto']) > 20 else '') 
+                            for p in data]
                     
-                    # Solo mostrar nombres cortos
-                    product_names = [p['nombre_producto'][:20] + ('...' if len(p['nombre_producto']) > 20 else '') 
-                                for p in data]
+                    # Convertir a float solo para matplotlib
+                    ganancias_float = [float(g) for g in ganancias]
                     
-                    bars = ax.barh(product_names, ganancias, color='#2196F3')
-                    ax.set_title("Ganancia por Producto (Top 20)")
-                    ax.set_xlabel("Ganancia Total")
+                    bars = ax.barh(nombres, ganancias_float, color='#2196F3')
+                    ax.set_title("Ganancia por Producto (Top 20)\n(Ventas - Compras)")
+                    ax.set_xlabel("Ganancia Total ($)")
                     
                     # Añadir etiquetas de valor
-                    max_val = max(abs(g) for g in ganancias) if ganancias else 0
+                    max_val = max(abs(g) for g in ganancias_float) if ganancias_float else 0
                     for bar, ganancia in zip(bars, ganancias):
                         width = bar.get_width()
                         ax.text(width + (max_val * 0.02),
@@ -676,48 +638,79 @@ class AnalisisGananciasApp:
                     self.show_error_message(self.tabs["temporal"]["container"], str(e))
                     
             def update_temporal_chart(self, event=None):
-                """Actualiza el gráfico temporal según la selección."""
-                try:
+                 """Actualiza el gráfico temporal según la selección."""
+                 try:
                     period_map = {
-                        "Día": ("DATE(f.fecha)", "Fecha"),
-                        "Semana": ("DATE_FORMAT(f.fecha, '%Y-%U')", "Semana"),
-                        "Mes": ("DATE_FORMAT(f.fecha, '%Y-%m')", "Mes"),
-                        "Trimestre": ("CONCAT(YEAR(f.fecha), '-Q', QUARTER(f.fecha))", "Trimestre"),
-                        "Año": ("YEAR(f.fecha)", "Año")
+                        "Día": ("DATE(factura.fecha)", "Día"),
+                        "Semana": ("DATE_FORMAT(factura.fecha, '%Y-%U')", "Semana"),
+                        "Mes": ("DATE_FORMAT(factura.fecha, '%Y-%m')", "Mes"),
+                        "Trimestre": ("CONCAT(YEAR(factura.fecha), '-Q', QUARTER(factura.fecha))", "Trimestre"),
+                        "Año": ("YEAR(factura.fecha)", "Año")
                     }
                     
                     selected = self.time_var.get()
                     period_func, period_label = period_map.get(selected, period_map["Mes"])
                     
+                    # Consulta para ventas
                     self.cursor.execute(f"""
                         SELECT 
                             {period_func} AS periodo,
-                            SUM(df.subtotal) AS ganancia
-                        FROM factura f
-                        JOIN detalle_factura df ON df.id_factura = f.id_factura
-                        GROUP BY periodo
+                            SUM(detalle_factura.subtotal) AS ventas
+                        FROM factura
+                        JOIN detalle_factura ON detalle_factura.id_factura = factura.id_factura
+                        GROUP BY {period_func}
                         ORDER BY periodo
                     """)
-                    data = self.cursor.fetchall()
+                    ventas_data = self.cursor.fetchall()
                     
-                    if not data:
+                    # Consulta para compras
+                    self.cursor.execute(f"""
+                        SELECT 
+                            {period_func.replace('factura.', 'compra.')} AS periodo,
+                            SUM(compra.cantidad * compra.precio_unitario_compra) AS compras
+                        FROM compra
+                        GROUP BY {period_func.replace('factura.', 'compra.')}
+                        ORDER BY periodo
+                    """)
+                    compras_data = self.cursor.fetchall()
+                    
+                    # Convertir a diccionarios para facilitar el procesamiento
+                    ventas_dict = {v['periodo']: self.convert_decimal(v['ventas']) for v in ventas_data}
+                    compras_dict = {c['periodo']: self.convert_decimal(c['compras']) for c in compras_data}
+                    
+                    # Obtener todos los periodos únicos
+                    all_periods = sorted(set(ventas_dict.keys()).union(set(compras_dict.keys())))
+                    
+                    if not all_periods:
                         self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
                         return
                     
-                    fig, ax = plt.subplots(figsize=(12, 5))
+                    # Preparar datos para el gráfico
+                    periods = []
+                    ventas = []
+                    compras = []
+                    ganancias = []
+                    
+                    for periodo in all_periods:
+                        venta = ventas_dict.get(periodo, 0.0)
+                        compra = compras_dict.get(periodo, 0.0)
+                        ganancia = venta - compra
+                        
+                        periods.append(str(periodo))
+                        ventas.append(venta)
+                        compras.append(compra)
+                        ganancias.append(ganancia)
+                    
+                    fig, ax = plt.subplots(figsize=(12, 6))
                     
                     # Formateador para valores monetarios
                     formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
                     ax.yaxis.set_major_formatter(formatter)
                     
-                    periods = [str(d['periodo']) for d in data]
-                    # Convertir valores Decimal a float
-                    values = [self.convert_decimal(d['ganancia']) for d in data]
-                    
-                    # Gráfico de línea con marcadores
-                    line = ax.plot(periods, values, marker='o', color='#9C27B0', linewidth=2)
-                    ax.set_title(f"Ganancias por {period_label}")
-                    ax.set_ylabel("Ganancia")
+                    # Gráfico de línea para la ganancia neta
+                    line = ax.plot(periods, ganancias, marker='o', color='#9C27B0', linewidth=2)
+                    ax.set_title(f"Ganancias Netas por {period_label}")
+                    ax.set_ylabel("Ganancia Neta ($)")
                     ax.set_xlabel(period_label)
                     ax.grid(True, linestyle='--', alpha=0.6)
                     
@@ -726,16 +719,16 @@ class AnalisisGananciasApp:
                         plt.xticks(rotation=45, ha='right')
                     
                     # Añadir etiquetas de valor a los puntos
-                    max_val = max(values) if values else 0
-                    for i, (period, value) in enumerate(zip(periods, values)):
-                        ax.text(i, value + (max_val * 0.05), 
-                            f"${value:,.2f}", 
+                    max_val = max(abs(g) for g in ganancias) if ganancias else 0
+                    for i, (period, ganancia) in enumerate(zip(periods, ganancias)):
+                        ax.text(i, ganancia + (max_val * 0.05), 
+                            f"${ganancia:,.2f}", 
                             ha='center', va='bottom', fontsize=8)
                     
                     plt.tight_layout()
                     self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
                     
-                except Exception as e:
+                 except Exception as e:
                     self.show_error_message(self.tabs["temporal"]["graph_frame"], str(e))
                     
             def generate_clients_chart(self):
@@ -858,12 +851,154 @@ class AnalisisGananciasApp:
         StatsWindow(self.root, self.cursor, self.conn)
     
     def export_to_pdf(self):
-        """Export analysis to PDF"""
-        # This would require additional libraries like reportlab
-        # For now, just show a message
-        messagebox.showinfo("Export", "Función de exportación a PDF pendiente de implementar.\n"
-                          "Puedes usar Ctrl+P para imprimir la pantalla actual.")
-
+        """Exporta las estadísticas del día a un archivo PDF"""
+        try:
+            # Obtener la fecha actual
+            fecha_actual = datetime.now().strftime("%Y-%m-%d")
+            
+            # Crear el nombre del archivo PDF
+            filename = f"Reporte_Diario_{fecha_actual}.pdf"
+            
+            # Crear el documento PDF
+            doc = SimpleDocTemplate(filename, pagesize=letter)
+            styles = getSampleStyleSheet()
+            story = []
+            
+            # Título del reporte
+            title = Paragraph(f"Reporte Diario - {fecha_actual}", styles['Title'])
+            story.append(title)
+            story.append(Spacer(1, 12))
+            
+            # Obtener datos de ventas del día
+            self.cursor.execute("""
+                SELECT 
+                    p.nombre_producto,
+                    df.cantidad,
+                    p.unidad,
+                    df.precio_unitario_venta,
+                    df.subtotal,
+                    c.nombre as cliente_nombre,
+                    tc.nombre as tipo_cliente
+                FROM detalle_factura df
+                JOIN producto p ON df.id_producto = p.id_producto
+                JOIN factura f ON df.id_factura = f.id_factura
+                JOIN cliente c ON f.id_cliente = c.id_cliente
+                JOIN tipo_cliente tc ON c.id_tipo = tc.id_tipo
+                WHERE DATE(f.fecha) = CURDATE()
+                ORDER BY f.id_factura
+            """)
+            ventas = self.cursor.fetchall()
+            
+            # Obtener datos de compras del día
+            self.cursor.execute("""
+                SELECT 
+                    p.nombre_producto,
+                    c.cantidad,
+                    p.unidad,
+                    c.precio_unitario_compra,
+                    (c.cantidad * c.precio_unitario_compra) as subtotal
+                FROM compra c
+                JOIN producto p ON c.id_producto = p.id_producto
+                WHERE DATE(c.fecha) = CURDATE()
+                ORDER BY c.id_compra
+            """)
+            compras = self.cursor.fetchall()
+            
+            # Calcular totales
+            total_ventas = sum(v['subtotal'] for v in ventas)
+            total_compras = sum(c['subtotal'] for c in compras)
+            ganancia_neta = total_ventas - total_compras
+            
+            # Sección de Ventas
+            story.append(Paragraph("Ventas del Día", styles['Heading2']))
+            
+            if ventas:
+                # Preparar datos para la tabla de ventas
+                ventas_data = [["Producto", "Cantidad", "Unidad", "Precio/U", "Subtotal", "Cliente", "Tipo Cliente"]]
+                for v in ventas:
+                    ventas_data.append([
+                        v['nombre_producto'],
+                        f"{v['cantidad']:.2f}",
+                        v['unidad'],
+                        f"${v['precio_unitario_venta']:.2f}",
+                        f"${v['subtotal']:.2f}",
+                        v['cliente_nombre'],
+                        v['tipo_cliente']
+                    ])
+                
+                # Crear tabla de ventas
+                ventas_table = Table(ventas_data)
+                ventas_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                story.append(ventas_table)
+                story.append(Spacer(1, 12))
+                
+                # Total ventas
+                story.append(Paragraph(f"Total Ventas: ${total_ventas:.2f}", styles['Heading3']))
+                story.append(Spacer(1, 12))
+            else:
+                story.append(Paragraph("No hubo ventas hoy.", styles['Normal']))
+                story.append(Spacer(1, 12))
+            
+            # Sección de Compras
+            story.append(Paragraph("Compras del Día", styles['Heading2']))
+            
+            if compras:
+                # Preparar datos para la tabla de compras
+                compras_data = [["Producto", "Cantidad", "Unidad", "Precio/U", "Subtotal"]]
+                for c in compras:
+                    compras_data.append([
+                        c['nombre_producto'],
+                        f"{c['cantidad']:.2f}",
+                        c['unidad'],
+                        f"${c['precio_unitario_compra']:.2f}",
+                        f"${c['subtotal']:.2f}"
+                    ])
+                
+                # Crear tabla de compras
+                compras_table = Table(compras_data)
+                compras_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                story.append(compras_table)
+                story.append(Spacer(1, 12))
+                
+                # Total compras
+                story.append(Paragraph(f"Total Compras: ${total_compras:.2f}", styles['Heading3']))
+                story.append(Spacer(1, 12))
+            else:
+                story.append(Paragraph("No hubo compras hoy.", styles['Normal']))
+                story.append(Spacer(1, 12))
+            
+            # Sección de Ganancias Netas
+            story.append(Paragraph("Resumen Financiero", styles['Heading2']))
+            story.append(Paragraph(f"Total Ventas: ${total_ventas:.2f}", styles['Normal']))
+            story.append(Paragraph(f"Total Compras: ${total_compras:.2f}", styles['Normal']))
+            story.append(Paragraph(f"Ganancia Neta: ${ganancia_neta:.2f}", 
+                                style=styles['Heading3'] if ganancia_neta >= 0 else styles['Heading4']))
+            
+            # Generar el PDF
+            doc.build(story)
+            messagebox.showinfo("Éxito", f"Reporte generado exitosamente: {filename}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo generar el PDF:\n{str(e)}")
+            
     def on_closing(self):
         """Clean up and close connection when closing the app"""
         try:
