@@ -853,11 +853,16 @@ class AnalisisGananciasApp:
     def export_to_pdf(self):
         """Exporta las estadísticas del día a un archivo PDF"""
         try:
+            # Crear la carpeta reportes si no existe
+            reportes_dir = "reportes"
+            if not os.path.exists(reportes_dir):
+                os.makedirs(reportes_dir)
+
             # Obtener la fecha actual
             fecha_actual = datetime.now().strftime("%Y-%m-%d")
             
             # Crear el nombre del archivo PDF
-            filename = f"Reporte_Diario_{fecha_actual}.pdf"
+            filename = os.path.join(reportes_dir, f"Reporte_Diario_{fecha_actual}.pdf")
             
             # Crear el documento PDF
             doc = SimpleDocTemplate(filename, pagesize=letter)
@@ -994,7 +999,7 @@ class AnalisisGananciasApp:
             
             # Generar el PDF
             doc.build(story)
-            messagebox.showinfo("Éxito", f"Reporte generado exitosamente: {filename}")
+            messagebox.showinfo("Éxito", f"Reporte generado exitosamente en: {filename}")
             
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo generar el PDF:\n{str(e)}")
