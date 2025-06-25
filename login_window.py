@@ -53,8 +53,8 @@ class LoginWindow:
         """Configurar ventana principal"""
         self.root.title("DISFRULEG - Iniciar Sesión")
         
-        # Use fixed geometry to avoid locale issues
-        self.root.geometry("450x600")
+        # Use fixed geometry to avoid locale issues - VENTANA MÁS GRANDE
+        self.root.geometry("450x650")  # Aumenté de 600 a 650
         self.root.configure(bg="#f0f0f0")
         self.root.resizable(False, False)
         
@@ -70,9 +70,9 @@ class LoginWindow:
         try:
             self.root.update_idletasks()
             
-            # Fixed dimensions to avoid float calculations
+            # Fixed dimensions to avoid float calculations - AJUSTADO AL NUEVO TAMAÑO
             width = 450
-            height = 600
+            height = 650  # Cambié de 600 a 650
             
             # Get screen dimensions and ensure they're integers
             screen_width = int(self.root.winfo_screenwidth())
@@ -208,12 +208,8 @@ class LoginWindow:
                       fg="#7F8C8D",
                       activebackground="white").pack(side="left")
         
-        # Buttons frame
-        buttons_frame = tk.Frame(inner_frame, bg="white")
-        buttons_frame.pack(fill="x", pady=(0, 10))
-        
-        # Login button
-        self.login_btn = tk.Button(buttons_frame,
+        # Login button - SOLO UN BOTÓN AZUL
+        self.login_btn = tk.Button(inner_frame,
                                  text="INICIAR SESIÓN",
                                  command=self.handle_login,
                                  font=("Arial", 12, "bold"),
@@ -222,19 +218,7 @@ class LoginWindow:
                                  relief="flat",
                                  cursor="hand2",
                                  pady=12)
-        self.login_btn.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        
-        # Enter button
-        self.enter_btn = tk.Button(buttons_frame,
-                                 text="ENTRAR",
-                                 command=self.handle_login,
-                                 font=("Arial", 12, "bold"),
-                                 bg="#27AE60",
-                                 fg="white",
-                                 relief="flat",
-                                 cursor="hand2",
-                                 pady=12)
-        self.enter_btn.pack(side="right", fill="x", expand=True, padx=(5, 0))
+        self.login_btn.pack(fill="x", pady=(0, 10))
         
         # Status label
         self.status_var = tk.StringVar()
@@ -298,9 +282,8 @@ class LoginWindow:
             self.password_entry.focus_set()
             return
         
-        # Deshabilitar botones y mostrar progreso
+        # Deshabilitar botón y mostrar progreso
         self.login_btn.config(state="disabled", text="VERIFICANDO...")
-        self.enter_btn.config(state="disabled", text="VERIFICANDO...")
         self.status_var.set("Verificando credenciales...")
         self.root.update()
         
@@ -344,9 +327,8 @@ class LoginWindow:
     
     def handle_auth_result(self, result):
         """Manejar resultado de autenticación"""
-        # Rehabilitar botones
+        # Rehabilitar botón
         self.login_btn.config(state="normal", text="INICIAR SESIÓN")
-        self.enter_btn.config(state="normal", text="ENTRAR")
         
         if result['success']:
             self.user_data = result['user_data']
@@ -372,7 +354,6 @@ class LoginWindow:
             # Manejar bloqueo especial
             if result.get('blocked', False):
                 self.login_btn.config(state="disabled")
-                self.enter_btn.config(state="disabled")
                 # Rehabilitar después del tiempo de bloqueo
                 if 'blocked_until' in result:
                     self.schedule_unblock(result['blocked_until'])
@@ -384,7 +365,6 @@ class LoginWindow:
         def check_unblock():
             if datetime.now() >= blocked_until:
                 self.login_btn.config(state="normal")
-                self.enter_btn.config(state="normal")
                 self.status_var.set("")
             else:
                 remaining = blocked_until - datetime.now()
