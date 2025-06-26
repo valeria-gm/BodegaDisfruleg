@@ -145,7 +145,8 @@ class PriceEditorApp:
         # Insert products into treeview
         for producto in productos:
             precio = producto.get('precio')
-            precio_str = f"${precio:.2f}" if precio is not None else "No establecido"
+            #precio_str = f"${precio:.2f}" if precio is not None else "No establecido"
+            precio_str = "No establecido" if precio is None else f"${float(precio):.2f}"
             id_precio = str(producto.get('id_precio', '')) if producto.get('id_precio') is not None else ""
             
             self.product_tree.insert("", "end", 
