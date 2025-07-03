@@ -7,11 +7,16 @@ import mysql.connector
 from conexion import conectar
 from decimal import Decimal, InvalidOperation
 
+# Obtener conexión y cursor
 conn = conectar()
 cursor = conn.cursor(dictionary=True)
 
-# Obtener clientes desde la base de datos con su tipo
-cursor.execute("SELECT id_cliente, nombre, id_tipo FROM cliente")
+# Obtener clientes con su grupo y descuento
+cursor.execute("""
+    SELECT c.id_cliente, c.nombre_cliente, c.id_grupo, g.descuento 
+    FROM cliente c
+    LEFT JOIN grupo g ON c.id_grupo = g.id_grupo
+""")
 clientes = cursor.fetchall()
 
 # Crear carpeta recibos si no existe
@@ -19,14 +24,18 @@ if not os.path.exists("recibos"):
     os.makedirs("recibos")
 
 class ReciboAppMejorado:
-    def __init__(self, root):
+    def __init__(self, root, user_data):
         self.root = root
         self.root.title("Generador de Recibos - Mejorado")
         self.root.geometry("1000x700")
 
+        self.user_data = user_data if isinstance(user_data, dict) else json.loads(user_data)
+        self.es_admin = (user_data['rol'] == 'admin')
+
         self.cliente_seleccionado = tk.StringVar()
         self.cliente_id = None
-        self.tipo_cliente_id = None
+        self.grupo_nombre_id = None
+        self.descuento_cliente = Decimal("0")
         
         # Variable para controlar el guardado automático
         self.guardar_en_bd = tk.BooleanVar(value=True)
@@ -60,7 +69,8 @@ class ReciboAppMejorado:
         
         # Barra de estado
         self.status_var = tk.StringVar()
-        self.status_var.set("Listo - Seleccione un cliente para comenzar")
+        #self.status_var.set("Listo - Seleccione un cliente para comenzar")
+        self.status_var.set(f"Usuario: {self.user_data['nombre_completo']} | Rol: {self.user_data['rol']} | Seleccione un cliente")
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -74,7 +84,7 @@ class ReciboAppMejorado:
         
         tk.Label(frame_interno, text="Cliente:", font=("Arial", 12)).pack(side="left", padx=5)
         
-        nombres_clientes = [cliente["nombre"] for cliente in clientes]
+        nombres_clientes = [cliente["nombre_cliente"] for cliente in clientes]
         self.cliente_combo = ttk.Combobox(frame_interno, textvariable=self.cliente_seleccionado, 
                                          values=nombres_clientes, state="readonly", width=40)
         self.cliente_combo.pack(side="left", padx=5)
@@ -150,22 +160,30 @@ class ReciboAppMejorado:
         scrollbar_carrito.pack(side="right", fill="y")
         
         # Treeview para carrito
-        self.carrito_tree = ttk.Treeview(tabla_carrito_frame,
-                                        columns=("producto", "cantidad", "unidad", "precio", "subtotal"),
-                                        show="headings",
-                                        yscrollcommand=scrollbar_carrito.set,
-                                        height=6)
+        self.carrito_tree = ttk.Treeview(
+            tabla_carrito_frame,
+            columns=("producto", "cantidad", "unidad", "precio_base", "descuento", "precio_final", "subtotal"),
+            show="headings",
+            yscrollcommand=scrollbar_carrito.set,
+            height=6
+        )
         
+        # Configurar encabezados
         self.carrito_tree.heading("producto", text="Producto")
         self.carrito_tree.heading("cantidad", text="Cantidad")
         self.carrito_tree.heading("unidad", text="Unidad")
-        self.carrito_tree.heading("precio", text="Precio Unit.")
+        self.carrito_tree.heading("precio_base", text="Precio Base")
+        self.carrito_tree.heading("descuento", text="Descuento")
+        self.carrito_tree.heading("precio_final", text="Precio Final")
         self.carrito_tree.heading("subtotal", text="Subtotal")
         
+        # Configurar anchos de columnas
         self.carrito_tree.column("producto", width=200)
         self.carrito_tree.column("cantidad", width=80)
         self.carrito_tree.column("unidad", width=80)
-        self.carrito_tree.column("precio", width=100)
+        self.carrito_tree.column("precio_base", width=100)
+        self.carrito_tree.column("descuento", width=80)
+        self.carrito_tree.column("precio_final", width=100)
         self.carrito_tree.column("subtotal", width=100)
         
         self.carrito_tree.pack(side="left", fill="both", expand=True)
@@ -207,32 +225,37 @@ class ReciboAppMejorado:
         """Cargar productos cuando se selecciona un cliente"""
         cliente_nombre = self.cliente_seleccionado.get()
         
-        # Buscar el tipo de cliente
+        # Buscar el cliente
         for cliente in clientes:
-            if cliente["nombre"] == cliente_nombre:
+            if cliente["nombre_cliente"] == cliente_nombre:
                 self.cliente_id = cliente["id_cliente"]
-                self.tipo_cliente_id = cliente["id_tipo"]
+                self.grupo_cliente_id = cliente["id_grupo"]
+                self.descuento_cliente = Decimal(str(cliente["descuento"])) if cliente["descuento"] else Decimal('0')
                 break
         
-        if not self.tipo_cliente_id:
-            self.tipo_cliente_id = 1
-        
-        # Obtener productos con precios
-        cursor.execute("""
-            SELECT p.id_producto, p.nombre_producto, p.unidad, pr.precio 
+        # Obtener productos con precios base (solo especiales si es admin)
+        query = """
+            SELECT p.id_producto, p.nombre_producto, p.unidad_producto, 
+                   p.precio_base, p.es_especial
             FROM producto p
-            JOIN precio pr ON p.id_producto = pr.id_producto
-            WHERE pr.id_tipo = %s
-            ORDER BY p.nombre_producto
-        """, (self.tipo_cliente_id,))
+            WHERE p.es_especial = FALSE
+        """ + (" OR 1=1" if self.es_admin else "")  # Simplificación para admins
         
+
+        
+        cursor.execute(query)
         self.todos_productos = cursor.fetchall()
         self.mostrar_productos()
+        
         
         # Limpiar carrito al cambiar cliente
         self.limpiar_carrito()
         
-        self.status_var.set(f"Cliente: {cliente_nombre} - {len(self.todos_productos)} productos disponibles")
+        self.status_var.set(
+            f"Cliente: {cliente_nombre} | " 
+            f"Descuento: {float(self.descuento_cliente)}% | "
+            f"{len(self.todos_productos)} productos"
+        )
 
     def mostrar_productos(self, productos=None):
         """Mostrar productos en la tabla"""
@@ -244,13 +267,21 @@ class ReciboAppMejorado:
             productos = self.todos_productos
         
         for producto in productos:
+            # Calcular precio con descuento
+            precio_base = Decimal(str(producto['precio_base']))
+            precio_final = precio_base * (1 - self.descuento_cliente / 100)
+
             # Verificar si ya está en el carrito
             en_carrito = "✓ En carrito" if producto['id_producto'] in self.carrito else "Doble-click para agregar"
             
+            # Marcar productos especiales
+            if producto['es_especial']:
+                en_carrito = "ESPECIAL - " + en_carrito
+
             self.productos_tree.insert("", "end", 
                                      values=(producto['nombre_producto'],
-                                            producto['unidad'],
-                                            f"${producto['precio']:.2f}",
+                                            producto['unidad_producto'],
+                                            f"${precio_final:.2f}",
                                             en_carrito),
                                      tags=(str(producto['id_producto']),))
 
@@ -280,114 +311,154 @@ class ReciboAppMejorado:
         if not item_seleccionado:
             return
         
-        producto_id = int(self.productos_tree.item(item_seleccionado, "tags")[0])
-        
-        # Si ya está en carrito, preguntar si quiere editar
-        if producto_id in self.carrito:
-            if messagebox.askyesno("Producto en carrito", 
-                                 "Este producto ya está en el carrito. ¿Desea editar la cantidad?"):
-                self.editar_cantidad_producto(producto_id)
-            return
-        
-        # Mostrar diálogo para cantidad
-        self.mostrar_dialogo_cantidad(producto_id)
+        try: 
+            # Obtener el ID del producto desde los tags del ítem seleccionado
+            item_data = self.productos_tree.item(item_seleccionado)
+            producto_id = int(item_data['tags'][0])
+            producto = next((p for p in self.todos_productos if p['id_producto'] == producto_id), None)
 
-    def mostrar_dialogo_cantidad(self, producto_id):
+            if not producto:
+                messagebox.showerror("Error", "Producto no encontrado")
+                return
+
+            # Verificar si es producto especial y el usuario no es admin  
+            if producto.get('es_especial', False) and not self.es_admin:
+                messagebox.showerror("Acceso denegado", "Requiere permisos de administrador")
+                return
+            
+            # Si ya está en carrito, preguntar si quiere editar
+            if producto_id in self.carrito:
+                if messagebox.askyesno("Producto en carrito", 
+                                    "Este producto ya está en el carrito. ¿Desea editar la cantidad?"):
+                    self.editar_cantidad_producto(producto_id)
+                return
+            
+            # Crear diálogo después de un pequeño retraso
+            self.root.after(100, lambda: self.mostrar_dialogo_seguro(producto))
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un error: {str(e)}")
+            #print(f"Error en agregar_producto_rapido: {e}")
+
+    def mostrar_dialogo_seguro(self, producto):
         """Mostrar diálogo para ingresar cantidad"""
-        # Buscar datos del producto
-        producto = next((p for p in self.todos_productos if p['id_producto'] == producto_id), None)
-        if not producto:
-            return
+        try:
+            # Crear la ventana
+            dialogo = tk.Toplevel(self.root)
+            dialogo.title("Agregar Producto")
+            
+            # Configuración inicial
+            dialogo.transient(self.root)
+            dialogo.resizable(False, False)
+            
+            # Cálculos con Decimal
+            precio_base = Decimal(str(producto['precio_base']))
+            descuento = Decimal(str(self.descuento_cliente)) if self.grupo_cliente_id else Decimal('0')
+            monto_descuento = precio_base * (descuento / Decimal('100'))
+            precio_con_descuento = precio_base - monto_descuento
         
-        # Crear ventana de diálogo
-        dialogo = tk.Toplevel(self.root)
-        dialogo.title("Agregar al Carrito")
-        dialogo.geometry("400x300")
-        dialogo.transient(self.root)
-        dialogo.grab_set()
+            
+            # Widgets usando solo grid()
+            tk.Label(dialogo, text=producto['nombre_producto'], 
+                font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(20, 5))
         
-        # Centrar diálogo
-        dialogo.update_idletasks()
-        x = (dialogo.winfo_screenwidth() // 2) - (dialogo.winfo_width() // 2)
-        y = (dialogo.winfo_screenheight() // 2) - (dialogo.winfo_height() // 2)
-        dialogo.geometry(f"+{x}+{y}")
+            tk.Label(dialogo, text=f"Precio base: ${float(precio_base):.2f}", 
+                    font=("Arial", 10)).grid(row=1, column=0, columnspan=2, sticky="w", padx=20)
+            
+            if descuento > 0:
+                tk.Label(dialogo, 
+                    text=f"Descuento ({float(descuento):.1f}%): -${float(monto_descuento):.2f}",
+                    font=("Arial", 10), fg="red").grid(row=2, column=0, columnspan=2, sticky="w", padx=20)
+            
+            tk.Label(dialogo, text=f"Precio final: ${float(precio_con_descuento):.2f}", 
+                    font=("Arial", 11, "bold")).grid(row=3, column=0, columnspan=2, sticky="w", padx=20, pady=5)
+            
+            tk.Label(dialogo, text=f"Unidad: {producto['unidad_producto']}",
+                    font=("Arial", 10)).grid(row=4, column=0, columnspan=2, sticky="w", padx=20)
+            
+            # Entrada de cantidad
+            tk.Label(dialogo, text="Cantidad:", font=("Arial", 11)).grid(row=2, column=0, sticky="e")
+            
+            cantidad_var = tk.StringVar(value="1.0")  # Usar StringVar para mejor control
+            cantidad_entry = tk.Entry(dialogo, textvariable=cantidad_var, 
+                                    width=10, font=("Arial", 11))
+            cantidad_entry.grid(row=2, column=1, sticky="w", padx=5)
+            cantidad_entry.focus_set()
+            cantidad_entry.select_range(0, tk.END)
+            
+            # Total
+            total_var = tk.StringVar(value=f"Total: ${float(precio_con_descuento):.2f}")
+            tk.Label(dialogo, textvariable=total_var, 
+                    font=("Arial", 11, "bold"), fg="#2196F3").grid(row=5, column=0, columnspan=2, pady=(10, 20))
         
-        # Información del producto
-        info_frame = tk.LabelFrame(dialogo, text="Producto Seleccionado", padx=10, pady=10)
-        info_frame.pack(fill="x", padx=20, pady=10)
-        
-        tk.Label(info_frame, text=f"Producto: {producto['nombre_producto']}", 
-                font=("Arial", 12, "bold")).pack(anchor="w")
-        tk.Label(info_frame, text=f"Unidad: {producto['unidad']}", 
-                font=("Arial", 11)).pack(anchor="w")
-        tk.Label(info_frame, text=f"Precio: ${producto['precio']:.2f}", 
-                font=("Arial", 11)).pack(anchor="w")
-        
-        # Entrada de cantidad
-        cantidad_frame = tk.Frame(dialogo)
-        cantidad_frame.pack(fill="x", padx=20, pady=20)
-        
-        tk.Label(cantidad_frame, text="Cantidad:", font=("Arial", 12)).pack(side="left")
-        
-        cantidad_var = tk.DoubleVar(value=1.0)
-        cantidad_entry = tk.Entry(cantidad_frame, textvariable=cantidad_var, 
-                                 width=15, font=("Arial", 12))
-        cantidad_entry.pack(side="left", padx=10)
-        cantidad_entry.focus_set()
-        cantidad_entry.select_range(0, tk.END)
-        
-        # Total calculado
-        total_var = tk.StringVar()
-        total_label = tk.Label(cantidad_frame, textvariable=total_var, 
-                              font=("Arial", 12, "bold"), fg="#2196F3")
-        total_label.pack(side="left", padx=20)
-        
-        def calcular_total(*args):
-            try:
-                cantidad = Decimal(str(cantidad_var.get()))  # Convertir a Decimal
-                precio = Decimal(str(producto['precio']))     # Asegurar que precio sea Decimal
-                total = cantidad * precio
-                total_var.set(f"Total: ${float(total):.2f}")
-            except:
-                total_var.set("Total: $0.00")
-        
-        cantidad_var.trace("w", calcular_total)
-        calcular_total()
-        
-        # Botones
-        botones_frame = tk.Frame(dialogo)
-        botones_frame.pack(pady=20)
-        
-        def agregar_al_carrito():
-            try:
-                cantidad = cantidad_var.get()
-                if cantidad <= 0:
-                    messagebox.showerror("Error", "La cantidad debe ser mayor que 0")
-                    return
+             # Frame para botones (usando grid dentro de este frame)
+            botones_frame = tk.Frame(dialogo)
+            botones_frame.grid(row=5, column=0, columnspan=2, pady=(0, 15))
                 
-                # Convertir cantidad a Decimal para consistencia
-                self.carrito[producto_id] = {
-                    'producto': producto,
-                    'cantidad': Decimal(str(cantidad))  # Guardar como Decimal
-                }
-                
-                self.actualizar_carrito()
-                self.mostrar_productos()  # Actualizar indicador "en carrito"
+            def agregar_al_carrito():
+                try:
+                    # Convertir a Decimal de manera segura
+                    cantidad = Decimal(cantidad_var.get().strip())
+                    if cantidad <= Decimal('0'):
+                        messagebox.showerror("Error", "La cantidad debe ser mayor que 0")
+                        return
+                    
+                    self.carrito[producto['id_producto']] = {
+                        'producto': producto,
+                        'cantidad': cantidad,
+                        'precio_base': float(precio_base),  # Guardamos ambos precios
+                        'precio_final': float(precio_con_descuento),
+                        'monto_descuento': float(monto_descuento)
+                    }
+                    
+                    self.actualizar_carrito()
+                    self.mostrar_productos()
+                    dialogo.destroy()
+
+                except Exception as e:
+                    messagebox.showerror("Error", f"No se pudo agregar: {str(e)}")
+            
+            tk.Button(botones_frame, text="Agregar", 
+                    command=agregar_al_carrito, bg="#4CAF50", fg="white",
+                    padx=15, pady=3).pack(side="left", padx=5)
+            
+            tk.Button(botones_frame, text="Cancelar", 
+                    command=dialogo.destroy, bg="#f44336", fg="white",
+                    padx=15, pady=3).pack(side="left", padx=5)
+            
+            # Enter para agregar
+            cantidad_entry.bind("<Return>", lambda e: agregar_al_carrito())
+
+            # Función para calcular total
+            def calcular_total(*args):
+                try:
+                    cantidad = Decimal(cantidad_var.get().strip())
+                    total = cantidad * precio_con_descuento
+                    total_var.set(f"Total: ${float(total):.2f}")
+                except (ValueError, InvalidOperation):
+                    total_var.set("Total: $0.00")
+            
+            cantidad_var.trace("w", calcular_total)
+            #calcular_total()
+            
+            # Asegurar que la ventana esté completamente inicializada
+            dialogo.update_idletasks()
+
+            # Centrar 
+            width = dialogo.winfo_reqwidth()
+            height = dialogo.winfo_reqheight()
+            x = (dialogo.winfo_screenwidth() // 2) - (width // 2)
+            y = (dialogo.winfo_screenheight() // 2) - (height // 2)
+            dialogo.geometry(f"+{x}+{y}")
+
+            # Hacer modal al final (esto es clave)
+            dialogo.grab_set()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo mostrar el diálogo: {str(e)}")
+            print(f"Error en mostrar_dialogo_cantidad: {e}")
+            if 'dialogo' in locals():
                 dialogo.destroy()
-                
-            except ValueError:
-                messagebox.showerror("Error", "Ingrese una cantidad válida")
-        
-        tk.Button(botones_frame, text="Agregar al Carrito", 
-                 command=agregar_al_carrito, bg="#4CAF50", fg="white", 
-                 padx=15, pady=5).pack(side="left", padx=10)
-        
-        tk.Button(botones_frame, text="Cancelar", 
-                 command=dialogo.destroy, bg="#f44336", fg="white", 
-                 padx=15, pady=5).pack(side="left", padx=10)
-        
-        # Enter para agregar
-        cantidad_entry.bind("<Return>", lambda e: agregar_al_carrito())
 
     def actualizar_carrito(self):
         """Actualizar visualización del carrito"""
@@ -399,20 +470,31 @@ class ReciboAppMejorado:
         
         for producto_id, item in self.carrito.items():
             producto = item['producto']
-            cantidad = Decimal(str(item['cantidad']))  # Convertir a Decimal
-            precio = Decimal(str(producto['precio']))  # Asegurar que precio sea Decimal
-            subtotal = cantidad * precio
+            cantidad = Decimal(str(item['cantidad']))
+            precio_base = Decimal(str(item['precio_base']))
+            precio_final = Decimal(str(item['precio_final']))
+            subtotal = cantidad * precio_final
             total_general += subtotal
             
             self.carrito_tree.insert("", "end",
-                                   values=(producto['nombre_producto'],
-                                          f"{float(cantidad):.2f}",
-                                          producto['unidad'],
-                                          f"${float(precio):.2f}",
-                                          f"${float(subtotal):.2f}"),
-                                   tags=(str(producto_id),))
+                                    values=(
+                                        producto['nombre_producto'],
+                                        f"{float(cantidad):.2f}",
+                                        producto['unidad_producto'],
+                                        f"${float(precio_base):.2f}",  # Mostramos precio base
+                                        f"-${float(item['monto_descuento']):.2f}" if self.grupo_cliente_id else "$0.00",  # Monto descuento
+                                        f"${float(precio_final):.2f}",  # Precio con descuento
+                                        f"${float(subtotal):.2f}"  # Subtotal con descuento aplicado
+                                    ),
+                                    tags=(str(producto_id),))
+          # Configurar las columnas del Treeview (asegúrate de que coincidan)
+        #self.carrito_tree['columns'] = ("producto", "cantidad", "unidad", "precio_base", "descuento", "precio_final", "subtotal")
+        self.carrito_tree.heading("precio_base", text="Precio Base")
+        self.carrito_tree.heading("descuento", text="Descuento")
+        self.carrito_tree.heading("precio_final", text="Precio Final")
         
         self.total_var.set(f"Total: ${float(total_general):.2f}")
+        self.status_var.set(f"Carrito: {len(self.carrito)} productos | Total: ${float(total_general):.2f}")
         
         # Actualizar status
         items_count = len(self.carrito)
@@ -492,16 +574,16 @@ class ReciboAppMejorado:
         content += f"Fecha: {datetime.now().strftime('%Y-%m-%d')}\n"
         content += "="*50 + "\n"
         
-        total_general = 0
+        total_general = Decimal('0')
         for item in self.carrito.values():
             producto = item['producto']
             cantidad = float(item['cantidad'])  # Convertir a float
-            precio = float(producto['precio'])   # Convertir a float
-            subtotal = cantidad * precio
-            total_general += subtotal
+            precio_final = float(item['precio_final'])  # Convertir a float
+            subtotal = cantidad * precio_final
+            total_general += Decimal(str(subtotal))
             
             content += f"{producto['nombre_producto']}\n"
-            content += f"  {cantidad:.2f} {producto['unidad']} x ${precio:.2f} = ${subtotal:.2f}\n\n"
+            content += f"  {cantidad:.2f} {producto['unidad_producto']} x ${precio_final:.2f} = ${subtotal:.2f}\n\n"
         
         content += "="*50 + "\n"
         content += f"TOTAL: ${total_general:.2f}"
@@ -521,39 +603,53 @@ class ReciboAppMejorado:
             messagebox.showerror("Error", "El carrito está vacío")
             return
         
+        # Preparar productos finales correctamente
+        productos_finales = []
+        for producto_id, item in self.carrito.items():
+            productos_finales.append({
+                'producto': item['producto'],
+                'cantidad': item['cantidad'],
+                'unidad': item['producto']['unidad_producto'],
+                'precio_final': Decimal(str(item['precio_final'])),
+                'subtotal': item['cantidad'] * Decimal(str(item['precio_final']))
+            })
+
+        total_general = sum(float(item['subtotal']) for item in productos_finales)
+    
+        if not messagebox.askyesno("Confirmar", f"¿Generar recibo por ${total_general:.2f}?"):
+            return
+    
         # Confirmar generación
         total_items = len(self.carrito)
-        total_general = sum(float(item['cantidad']) * float(item['producto']['precio']) for item in self.carrito.values())
+        total_general = sum(float(item['cantidad']) * float(item['precio_final']) for item in self.carrito.values())
         
+        """
         mensaje = f"¿Generar recibo?\n\n"
         mensaje += f"Cliente: {self.cliente_seleccionado.get()}\n"
         mensaje += f"Productos: {total_items}\n"
+        if self.grupo_cliente_id:
+            mensaje += f"Descuento aplicado: {float(self.descuento_cliente):.1f}%\n"
         mensaje += f"Total: ${total_general:.2f}"
         
         if not messagebox.askyesno("Confirmar Recibo", mensaje):
             return
-        
-        # Preparar productos finales
-        productos_finales = []
-        for item in self.carrito.values():
-            producto = item['producto']
-            cantidad = float(item['cantidad'])  # Convertir Decimal a float para PDF
-            precio = float(producto['precio'])  # Convertir Decimal a float para PDF
-            total = cantidad * precio
-            productos_finales.append((
-                producto['nombre_producto'], 
-                cantidad, 
-                producto['unidad'], 
-                precio, 
-                total
-            ))
+        """
         
         # Generar PDF
-        self.crear_pdf(productos_finales, total_general)
+        # Generar PDF
+        self.crear_pdf(
+            [(item['producto']['nombre_producto'], 
+            float(item['cantidad']), 
+            item['unidad'], 
+            float(item['precio_final']), 
+            float(item['subtotal'])) for item in productos_finales],
+            total_general
+    )
         
         # Guardar en BD si está activado
         if self.guardar_en_bd.get():
-            self.guardar_factura(productos_finales)
+            if self.guardar_factura(productos_finales):
+                messagebox.showinfo("Éxito", "Recibo guardado correctamente")
         
         # Limpiar carrito después de generar
         if messagebox.askyesno("Limpiar Carrito", "¿Desea limpiar el carrito para un nuevo recibo?"):
@@ -607,31 +703,66 @@ class ReciboAppMejorado:
     def guardar_factura(self, productos_finales):
         """Guardar factura en la base de datos"""
         try:
+            # Limpiar cualquier resultado pendiente
+            while cursor.nextset():
+                pass
+                
             cursor.execute("START TRANSACTION")
             
+            # Insertar factura
             cursor.execute(
-                "INSERT INTO factura (fecha, id_cliente) VALUES (%s, %s)",
-                (datetime.now().strftime("%Y-%m-%d"), self.cliente_id)
+                "INSERT INTO factura (fecha_factura, id_cliente) VALUES (%s, %s)",
+                (datetime.now().strftime('%Y-%m-%d'), self.cliente_id)
             )
             factura_id = cursor.lastrowid
             
-            for nombre, cantidad, unidad, precio_unitario, total in productos_finales:
-                cursor.execute("SELECT id_producto FROM producto WHERE nombre_producto = %s", (nombre,))
-                producto = cursor.fetchone()
-                if producto:
-                    cursor.execute(
-                        "INSERT INTO detalle_factura (id_factura, id_producto, cantidad, precio_unitario_venta) VALUES (%s, %s, %s, %s)",
-                        (factura_id, producto["id_producto"], cantidad, precio_unitario)
-                    )
+            # Insertar detalles de factura
+            for item in productos_finales:
+                # Asegurarnos que estamos accediendo correctamente al diccionario
+                if isinstance(item, dict):  # Si es un diccionario
+                    id_producto = item['producto']['id_producto']
+                    cantidad = item['cantidad']
+                    precio = item['precio_final']
+                else:  # Si es una tupla (para compatibilidad con versiones anteriores)
+                    id_producto = item[0]
+                    cantidad = item[1]
+                    precio = item[3]
+                # Usamos parámetros nombrados para mayor claridad
+
+                cursor.execute(
+                    """INSERT INTO detalle_factura 
+                    (id_factura, id_producto, cantidad_factura, precio_unitario_venta) 
+                     VALUES (%s, %s, %s, %s)""",
+                    (factura_id, id_producto, float(cantidad), float(precio))
+                )
             
             conn.commit()
             self.status_var.set(f"Factura #{factura_id} guardada en base de datos")
-            
+            return True
+        
+        except mysql.connector.Error as err:
+            conn.rollback()
+            messagebox.showerror("Error", f"Error al guardar en la base de datos: {err}")
+            return False
+        
         except Exception as e:
             conn.rollback()
-            messagebox.showerror("Error", f"Error al guardar en la base de datos: {str(e)}")
-
+            messagebox.showerror("Error", f"Error inesperado: {str(e)}")
+            return False 
+        
+        finally:
+            # Limpiar posibles resultados pendientes
+            try:
+                while cursor.nextset():
+                    pass
+            except:
+                pass
+    
 if __name__ == "__main__":
     root = tk.Tk()
-    app = ReciboAppMejorado(root)
+    user_data = {
+        'nombre_completo': 'Usuario Prueba',
+        'rol': 'usuario'  # Cambiar a 'admin' para probar productos especiales
+    }
+    app = ReciboAppMejorado(root, user_data)
     root.mainloop()
