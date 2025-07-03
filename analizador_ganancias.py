@@ -18,10 +18,13 @@ from reportlab.lib.units import inch
 from datetime import datetime
 
 class AnalisisGananciasApp:
-    def __init__(self, root):
+    def __init__(self, root, user_data):
         self.root = root
         self.root.title("Análisis de Ganancias - Disfruleg")
         self.root.geometry("1000x700")
+        
+        self.user_data = user_data if isinstance(user_data, dict) else {}
+        self.es_admin = (self.user_data.get('rol', '') == 'admin')
         
         # Connect to database
         try:
@@ -52,9 +55,6 @@ class AnalisisGananciasApp:
         tk.Button(button_frame, text="Exportar PDF", command=self.export_to_pdf, 
                   bg="#2196F3", fg="white", padx=10, pady=3).pack(side="left", padx=5)
         
-        #tk.Button(button_frame, text="Ver Gráfico", command=self.show_chart, 
-                  #bg="#FF5722", fg="white", padx=10, pady=3).pack(side="left", padx=5)
-        
         tk.Button(button_frame, text="Estadísticas Avanzadas", command=self.show_advanced_stats,
                   bg="#9C27B0", fg="white", padx=10, pady=3).pack(side="left", padx=5)
 
@@ -70,7 +70,7 @@ class AnalisisGananciasApp:
         
         # Status bar
         self.status_var = tk.StringVar()
-        self.status_var.set("Listo")
+        self.status_var.set(f"Usuario: {self.user_data.get('nombre_completo', '')} | Rol: {self.user_data.get('rol', '')} | Listo")
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
     
@@ -181,39 +181,44 @@ class AnalisisGananciasApp:
         h_scrollbar.config(command=self.tree.xview)
     
     def load_analysis(self):
-        """Load profitability analysis from database"""
+        """Load profitability analysis from database with discount consideration"""
         try:
-            # Main query for product analysis
+            # Main query for product analysis - MODIFIED to include discounts
             self.cursor.execute("""
                 SELECT 
                     p.id_producto,
                     p.nombre_producto,
-                    p.unidad,
+                    p.unidad_producto as unidad,
+                    p.precio_base,
+                    p.stock,
                     
-                    -- Ventas
-                    COALESCE(SUM(df.cantidad), 0) as cantidad_vendida,
+                    -- Ventas (using view that applies discounts)
+                    COALESCE(SUM(df.cantidad_factura), 0) as cantidad_vendida,
                     COALESCE(AVG(df.precio_unitario_venta), 0) as precio_promedio_venta,
-                    COALESCE(SUM(df.subtotal), 0) as ingresos_totales,
+                    COALESCE(SUM(vd.subtotal_con_descuento), 0) as ingresos_totales,
                     
-                    -- Compras
-                    COALESCE(SUM(c.cantidad), 0) as cantidad_comprada,
+                    -- Compras (no changes)
+                    COALESCE(SUM(c.cantidad_compra), 0) as cantidad_comprada,
                     COALESCE(AVG(c.precio_unitario_compra), 0) as precio_promedio_compra,
-                    COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0) as costos_totales,
+                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) as costos_totales,
                     
-                    -- Ganancias
-                    COALESCE(SUM(df.subtotal), 0) - COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0) as ganancia_total,
+                    -- Ganancias (now using subtotal_con_descuento)
+                    COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
+                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) as ganancia_total,
                     
-                    -- Margen
+                    -- Margen (calculated with discounted income)
                     CASE 
-                        WHEN COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0) = 0 THEN 0
-                        ELSE ROUND(((COALESCE(SUM(df.subtotal), 0) - COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0)) / 
-                                    COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0)) * 100, 2)
+                        WHEN COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) = 0 THEN 0
+                        ELSE ROUND(((COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
+                                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)) / 
+                                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)) * 100, 2)
                     END as margen_ganancia_porcentaje
                     
                 FROM producto p
                 LEFT JOIN detalle_factura df ON p.id_producto = df.id_producto
+                LEFT JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                 LEFT JOIN compra c ON p.id_producto = c.id_producto
-                GROUP BY p.id_producto, p.nombre_producto, p.unidad
+                GROUP BY p.id_producto, p.nombre_producto, p.unidad_producto, p.precio_base, p.stock
                 ORDER BY ganancia_total DESC
             """)
             
@@ -243,7 +248,7 @@ class AnalisisGananciasApp:
             # Populate tree
             for product in products:
                 # Calculate stock
-                stock = product['cantidad_comprada'] - product['cantidad_vendida']
+                stock = product['stock']
                 
                 # Color coding for ganancia
                 ganancia = product['ganancia_total']
@@ -291,7 +296,7 @@ class AnalisisGananciasApp:
         # Filter products
         for product in self.all_products:
             if search_text in product['nombre_producto'].lower():
-                stock = product['cantidad_comprada'] - product['cantidad_vendida']
+                stock = product['stock']
                 
                 ganancia = product['ganancia_total']
                 if ganancia > 0:
@@ -335,7 +340,7 @@ class AnalisisGananciasApp:
                 should_include = True
             
             if should_include:
-                stock = product['cantidad_comprada'] - product['cantidad_vendida']
+                stock = product['stock']
                 
                 if ganancia > 0:
                     tags = ('positive',)
@@ -455,15 +460,17 @@ class AnalisisGananciasApp:
                     messagebox.showerror("Error", f"No se pudieron generar todos los gráficos: {str(e)}")
                     
             def generate_sales_chart(self):
-                 """Genera gráficos de productos rentables y con pérdidas."""
-                 try:
-                    # Obtener todos los productos con sus ganancias
+                """Genera gráficos de productos rentables y con pérdidas."""
+                try:
+                    # Obtener todos los productos con sus ganancias (considerando descuentos)
                     self.cursor.execute("""
                         SELECT 
                             p.nombre_producto,
-                            COALESCE(SUM(df.subtotal), 0) - COALESCE(SUM(c.cantidad * c.precio_unitario_compra), 0) AS ganancia_total
+                            COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
+                            COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) AS ganancia_total
                         FROM producto p
                         LEFT JOIN detalle_factura df ON df.id_producto = p.id_producto
+                        LEFT JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                         LEFT JOIN compra c ON c.id_producto = p.id_producto
                         GROUP BY p.id_producto, p.nombre_producto
                         HAVING ganancia_total IS NOT NULL
@@ -483,7 +490,7 @@ class AnalisisGananciasApp:
                         self.show_no_data_message(self.tabs["sales"]["container"])
                         return
                     
-                    fig = plt.Figure(figsize=(12, 10))
+                    fig = plt.Figure(figsize=(12, 10), tight_layout=True)  # Añadido tight_layout
                     
                     # Gráfico de productos rentables
                     if profitable_products:
@@ -492,17 +499,21 @@ class AnalisisGananciasApp:
                                 else p['nombre_producto'] for p in profitable_products]
                         ganancias = [self.ensure_decimal(p['ganancia_total']) for p in profitable_products]
                         
-                        bars = ax1.bar(names, ganancias, color='#4CAF50')
+                        # Convertir a float para matplotlib
+                        ganancias_float = [float(g) for g in ganancias]
+                        
+                        bars = ax1.barh(names, ganancias_float, color='#4CAF50')
                         ax1.set_title('Top 10 Productos Más Rentables')
-                        ax1.set_ylabel('Ganancia ($)')
-                        ax1.tick_params(axis='x', rotation=45)
+                        ax1.set_xlabel('Ganancia ($)')
                         
                         # Añadir etiquetas de valor
+                        max_val = max(abs(g) for g in ganancias_float) if ganancias_float else 0
                         for bar, ganancia in zip(bars, ganancias):
-                            height = bar.get_height()
-                            ax1.text(bar.get_x() + bar.get_width()/2., height,
-                                    f'${float(ganancia):,.0f}', 
-                                    ha='center', va='bottom')
+                            width = bar.get_width()
+                            ax1.text(width + (max_val * 0.02),
+                                    bar.get_y() + bar.get_height()/2,
+                                    f'${float(ganancia):,.2f}', 
+                                    ha='left', va='center')
                     
                     # Gráfico de productos con pérdidas
                     if loss_products:
@@ -511,22 +522,25 @@ class AnalisisGananciasApp:
                                 else p['nombre_producto'] for p in loss_products]
                         perdidas = [abs(self.ensure_decimal(p['ganancia_total'])) for p in loss_products]
                         
-                        bars = ax2.bar(names, perdidas, color='#f44336')
+                        # Convertir a float para matplotlib
+                        perdidas_float = [float(p) for p in perdidas]
+                        
+                        bars = ax2.barh(names, perdidas_float, color='#f44336')
                         ax2.set_title('Top 10 Productos con Mayor Pérdida')
-                        ax2.set_ylabel('Pérdida ($)')
-                        ax2.tick_params(axis='x', rotation=45)
+                        ax2.set_xlabel('Pérdida ($)')
                         
                         # Añadir etiquetas de valor
+                        max_val = max(abs(g) for g in perdidas_float) if perdidas_float else 0
                         for bar, perdida in zip(bars, perdidas):
-                            height = bar.get_height()
-                            ax2.text(bar.get_x() + bar.get_width()/2., height,
-                                    f'${float(perdida):,.0f}', 
-                                    ha='center', va='bottom')
+                            width = bar.get_width()
+                            ax2.text(width + (max_val * 0.02),
+                                    bar.get_y() + bar.get_height()/2,
+                                    f'${float(perdida):,.2f}', 
+                                    ha='left', va='center')
                     
-                    plt.tight_layout()
                     self.embed_plot(fig, self.tabs["sales"]["container"])
                     
-                 except Exception as e:
+                except Exception as e:
                     self.show_error_message(self.tabs["sales"]["container"], str(e))
 
             def generate_profits_chart(self):
@@ -537,21 +551,23 @@ class AnalisisGananciasApp:
                             p.id_producto,
                             p.nombre_producto,
                             COALESCE((
-                                SELECT SUM(df.subtotal) 
+                                SELECT SUM(vd.subtotal_con_descuento)
                                 FROM detalle_factura df 
+                                JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                                 WHERE df.id_producto = p.id_producto
                             ), 0) AS total_ventas,
                             COALESCE((
-                                SELECT SUM(c.cantidad * c.precio_unitario_compra) 
+                                SELECT SUM(c.cantidad_compra * c.precio_unitario_compra)
                                 FROM compra c 
                                 WHERE c.id_producto = p.id_producto
                             ), 0) AS total_compras,
                             COALESCE((
-                                SELECT SUM(df.subtotal) 
+                                SELECT SUM(vd.subtotal_con_descuento)
                                 FROM detalle_factura df 
+                                JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                                 WHERE df.id_producto = p.id_producto
                             ), 0) - COALESCE((
-                                SELECT SUM(c.cantidad * c.precio_unitario_compra) 
+                                SELECT SUM(c.cantidad_compra * c.precio_unitario_compra)
                                 FROM compra c 
                                 WHERE c.id_producto = p.id_producto
                             ), 0) AS ganancia
@@ -581,7 +597,7 @@ class AnalisisGananciasApp:
                     ganancias_float = [float(g) for g in ganancias]
                     
                     bars = ax.barh(nombres, ganancias_float, color='#2196F3')
-                    ax.set_title("Ganancia por Producto (Top 20)\n(Ventas - Compras)")
+                    ax.set_title("Ganancia por Producto (Top 20)\n(Ventas con descuento - Compras)")
                     ax.set_xlabel("Ganancia Total ($)")
                     
                     # Añadir etiquetas de valor
@@ -638,26 +654,27 @@ class AnalisisGananciasApp:
                     self.show_error_message(self.tabs["temporal"]["container"], str(e))
                     
             def update_temporal_chart(self, event=None):
-                 """Actualiza el gráfico temporal según la selección."""
-                 try:
+                """Actualiza el gráfico temporal según la selección."""
+                try:
                     period_map = {
-                        "Día": ("DATE(factura.fecha)", "Día"),
-                        "Semana": ("DATE_FORMAT(factura.fecha, '%Y-%U')", "Semana"),
-                        "Mes": ("DATE_FORMAT(factura.fecha, '%Y-%m')", "Mes"),
-                        "Trimestre": ("CONCAT(YEAR(factura.fecha), '-Q', QUARTER(factura.fecha))", "Trimestre"),
-                        "Año": ("YEAR(factura.fecha)", "Año")
+                        "Día": ("DATE(f.fecha_factura)", "Día"),
+                        "Semana": ("DATE_FORMAT(f.fecha_factura, '%Y-%U')", "Semana"),
+                        "Mes": ("DATE_FORMAT(f.fecha_factura, '%Y-%m')", "Mes"),
+                        "Trimestre": ("CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))", "Trimestre"),
+                        "Año": ("YEAR(f.fecha_factura)", "Año")
                     }
                     
                     selected = self.time_var.get()
                     period_func, period_label = period_map.get(selected, period_map["Mes"])
                     
-                    # Consulta para ventas
+                    # Consulta para ventas (usando vista con descuentos)
                     self.cursor.execute(f"""
                         SELECT 
                             {period_func} AS periodo,
-                            SUM(detalle_factura.subtotal) AS ventas
-                        FROM factura
-                        JOIN detalle_factura ON detalle_factura.id_factura = factura.id_factura
+                            SUM(vd.subtotal_con_descuento) AS ventas
+                        FROM factura f
+                        JOIN detalle_factura df ON df.id_factura = f.id_factura
+                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                         GROUP BY {period_func}
                         ORDER BY periodo
                     """)
@@ -666,10 +683,10 @@ class AnalisisGananciasApp:
                     # Consulta para compras
                     self.cursor.execute(f"""
                         SELECT 
-                            {period_func.replace('factura.', 'compra.')} AS periodo,
-                            SUM(compra.cantidad * compra.precio_unitario_compra) AS compras
-                        FROM compra
-                        GROUP BY {period_func.replace('factura.', 'compra.')}
+                            {period_func.replace('f.fecha_factura', 'c.fecha_compra')} AS periodo,
+                            SUM(c.cantidad_compra * c.precio_unitario_compra) AS compras
+                        FROM compra c
+                        GROUP BY {period_func.replace('f.fecha_factura', 'c.fecha_compra')}
                         ORDER BY periodo
                     """)
                     compras_data = self.cursor.fetchall()
@@ -728,19 +745,20 @@ class AnalisisGananciasApp:
                     plt.tight_layout()
                     self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
                     
-                 except Exception as e:
+                except Exception as e:
                     self.show_error_message(self.tabs["temporal"]["graph_frame"], str(e))
-                    
+
             def generate_clients_chart(self):
                 """Genera gráfico de ventas por cliente."""
                 try:
                     self.cursor.execute("""
                         SELECT 
-                            c.nombre,
-                            SUM(df.subtotal) AS total_vendido
+                            c.nombre_cliente as nombre,
+                            SUM(vd.subtotal_con_descuento) AS total_vendido
                         FROM cliente c
                         JOIN factura f ON f.id_cliente = c.id_cliente
                         JOIN detalle_factura df ON df.id_factura = f.id_factura
+                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                         GROUP BY c.id_cliente
                         ORDER BY total_vendido DESC
                         LIMIT 15
@@ -762,7 +780,7 @@ class AnalisisGananciasApp:
                     amounts = [self.convert_decimal(d['total_vendido']) for d in data]
                     
                     bars = ax.bar(clients, amounts, color='#FF9800')
-                    ax.set_title("Ventas por Cliente (Top 15)")
+                    ax.set_title("Ventas por Cliente (Top 15) - Con descuentos aplicados")
                     ax.set_ylabel("Total Vendido")
                     
                     # Añadir etiquetas de valor
@@ -874,22 +892,24 @@ class AnalisisGananciasApp:
             story.append(title)
             story.append(Spacer(1, 12))
             
-            # Obtener datos de ventas del día
+            # Obtener datos de ventas del día (usando vista con descuentos)
             self.cursor.execute("""
                 SELECT 
                     p.nombre_producto,
-                    df.cantidad,
-                    p.unidad,
+                    df.cantidad_factura as cantidad,
+                    p.unidad_producto as unidad,
                     df.precio_unitario_venta,
-                    df.subtotal,
-                    c.nombre as cliente_nombre,
-                    tc.nombre as tipo_cliente
+                    vd.subtotal_con_descuento as subtotal,
+                    c.nombre_cliente as cliente_nombre,
+                    g.clave_grupo as tipo_cliente,
+                    g.descuento as descuento_aplicado
                 FROM detalle_factura df
+                JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                 JOIN producto p ON df.id_producto = p.id_producto
                 JOIN factura f ON df.id_factura = f.id_factura
                 JOIN cliente c ON f.id_cliente = c.id_cliente
-                JOIN tipo_cliente tc ON c.id_tipo = tc.id_tipo
-                WHERE DATE(f.fecha) = CURDATE()
+                LEFT JOIN grupo g ON c.id_grupo = g.id_grupo
+                WHERE DATE(f.fecha_factura) = CURDATE()
                 ORDER BY f.id_factura
             """)
             ventas = self.cursor.fetchall()
@@ -898,37 +918,38 @@ class AnalisisGananciasApp:
             self.cursor.execute("""
                 SELECT 
                     p.nombre_producto,
-                    c.cantidad,
-                    p.unidad,
+                    c.cantidad_compra as cantidad,
+                    p.unidad_producto as unidad,
                     c.precio_unitario_compra,
-                    (c.cantidad * c.precio_unitario_compra) as subtotal
+                    (c.cantidad_compra * c.precio_unitario_compra) as subtotal
                 FROM compra c
                 JOIN producto p ON c.id_producto = p.id_producto
-                WHERE DATE(c.fecha) = CURDATE()
+                WHERE DATE(c.fecha_compra) = CURDATE()
                 ORDER BY c.id_compra
             """)
             compras = self.cursor.fetchall()
             
-            # Calcular totales
+            # Calcular totales (usando subtotales con descuento)
             total_ventas = sum(v['subtotal'] for v in ventas)
             total_compras = sum(c['subtotal'] for c in compras)
             ganancia_neta = total_ventas - total_compras
             
             # Sección de Ventas
-            story.append(Paragraph("Ventas del Día", styles['Heading2']))
+            story.append(Paragraph("Ventas del Día (con descuentos aplicados)", styles['Heading2']))
             
             if ventas:
                 # Preparar datos para la tabla de ventas
-                ventas_data = [["Producto", "Cantidad", "Unidad", "Precio/U", "Subtotal", "Cliente", "Tipo Cliente"]]
+                ventas_data = [["Producto", "Cantidad", "Unidad", "Precio/U", "Descuento", "Subtotal", "Cliente", "Tipo Cliente"]]
                 for v in ventas:
                     ventas_data.append([
                         v['nombre_producto'],
                         f"{v['cantidad']:.2f}",
                         v['unidad'],
                         f"${v['precio_unitario_venta']:.2f}",
+                        f"{v['descuento_aplicado'] or 0}%" if v['descuento_aplicado'] else "0%",
                         f"${v['subtotal']:.2f}",
                         v['cliente_nombre'],
-                        v['tipo_cliente']
+                        v['tipo_cliente'] if v['tipo_cliente'] else "Ninguno"
                     ])
                 
                 # Crear tabla de ventas
@@ -947,7 +968,7 @@ class AnalisisGananciasApp:
                 story.append(Spacer(1, 12))
                 
                 # Total ventas
-                story.append(Paragraph(f"Total Ventas: ${total_ventas:.2f}", styles['Heading3']))
+                story.append(Paragraph(f"Total Ventas (con descuentos): ${total_ventas:.2f}", styles['Heading3']))
                 story.append(Spacer(1, 12))
             else:
                 story.append(Paragraph("No hubo ventas hoy.", styles['Normal']))
@@ -992,7 +1013,7 @@ class AnalisisGananciasApp:
             
             # Sección de Ganancias Netas
             story.append(Paragraph("Resumen Financiero", styles['Heading2']))
-            story.append(Paragraph(f"Total Ventas: ${total_ventas:.2f}", styles['Normal']))
+            story.append(Paragraph(f"Total Ventas (con descuentos): ${total_ventas:.2f}", styles['Normal']))
             story.append(Paragraph(f"Total Compras: ${total_compras:.2f}", styles['Normal']))
             story.append(Paragraph(f"Ganancia Neta: ${ganancia_neta:.2f}", 
                                 style=styles['Heading3'] if ganancia_neta >= 0 else styles['Heading4']))
@@ -1015,6 +1036,10 @@ class AnalisisGananciasApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = AnalisisGananciasApp(root)
+    user_data = {
+        'nombre_completo': 'Usuario Prueba',
+        'rol': 'usuario'  # Cambiar a 'admin' para probar productos especiales
+    }
+    app = AnalisisGananciasApp(root, user_data)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()

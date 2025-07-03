@@ -24,7 +24,8 @@ except ImportError:
 try:
     from db_manager import db_manager
     from session_manager import session_manager
-    DB_AVAILABLE = True
+    from conexion import db_available
+    DB_AVAILABLE = db_available
 except ImportError:
     print("Warning: DB components not available")
     DB_AVAILABLE = False

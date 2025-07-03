@@ -1,601 +1,649 @@
 import os
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, simpledialog
 import mysql.connector
 from conexion import conectar
 from decimal import Decimal
+from auth_manager import AuthManager
 
 class PriceEditorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Editor de Precios y Productos - Disfruleg")
-        self.root.geometry("800x600")
+        self.root.title("Editor de Precios - Disfruleg")
+        self.root.geometry("900x650")
         
         # Connect to database
         self.conn = conectar()
         self.cursor = self.conn.cursor(dictionary=True)
+        self.auth_manager = AuthManager()
         
         # Variables
-        self.current_tipo_cliente = tk.IntVar(value=1)  # Default to Regular
-        self.changes_made = False  # Track if changes have been made
+        self.current_group = tk.IntVar(value=1)
+        self.changes_made = False
         
         self.create_interface()
+        self.load_groups()
         self.load_products()
-        
+    
     def create_interface(self):
-        # Main frame to contain all elements
-        main_frame = tk.Frame(self.root)
-        main_frame.pack(fill="both", expand=True)
+        # Main container
+        main_frame = tk.Frame(self.root, bg="#f0f0f0")
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Title
-        title_frame = tk.Frame(main_frame)
-        title_frame.pack(fill="x", pady=10)
+        title_frame = tk.Frame(main_frame, bg="#2C3E50", relief="raised", bd=2)
+        title_frame.pack(fill="x", pady=(0, 15))
         
-        tk.Label(title_frame, text="EDITOR DE PRECIOS Y PRODUCTOS", font=("Arial", 18, "bold")).pack()
+        tk.Label(title_frame, 
+                text="EDITOR DE PRECIOS", 
+                font=("Arial", 18, "bold"),
+                fg="white", bg="#2C3E50").pack(pady=10)
         
-        # Customer type selection
-        tipo_frame = tk.Frame(main_frame)
-        tipo_frame.pack(fill="x", pady=5)
+        # Groups frame
+        group_frame = tk.Frame(main_frame, bg="#f0f0f0")
+        group_frame.pack(fill="x", pady=(0, 10))
         
-        tk.Label(tipo_frame, text="Tipo de Cliente:", font=("Arial", 12)).pack(side="left", padx=10)
+        tk.Label(group_frame, 
+                text="Grupo de Cliente:", 
+                font=("Arial", 12, "bold"),
+                bg="#f0f0f0").pack(side="left", padx=5)
         
-        # Get customer types from database
-        self.cursor.execute("SELECT id_tipo, nombre FROM tipo_cliente")
-        tipos_cliente = self.cursor.fetchall()
+        self.group_buttons_frame = tk.Frame(group_frame, bg="#f0f0f0")
+        self.group_buttons_frame.pack(side="left")
         
-        for tipo in tipos_cliente:
-            rb = tk.Radiobutton(tipo_frame, text=tipo["nombre"], variable=self.current_tipo_cliente, 
-                               value=tipo["id_tipo"], command=self.load_products)
-            rb.pack(side="left", padx=10)
+        # Edit discount button
+        tk.Button(group_frame, 
+                 text="Editar Descuento", 
+                 command=self.edit_group_discount,
+                 bg="#3498DB", fg="white").pack(side="left", padx=10)
         
-        # Search and action buttons frame
-        action_frame = tk.Frame(main_frame)
-        action_frame.pack(fill="x", pady=5, padx=10)
+        # Search and actions frame
+        action_frame = tk.Frame(main_frame, bg="#f0f0f0")
+        action_frame.pack(fill="x", pady=10)
         
-        # Search section
-        search_frame = tk.Frame(action_frame)
-        search_frame.pack(side="left", fill="x", expand=True)
+        # Search
+        tk.Label(action_frame, 
+                text="Buscar:", 
+                font=("Arial", 12),
+                bg="#f0f0f0").pack(side="left")
         
-        tk.Label(search_frame, text="Buscar:", font=("Arial", 12)).pack(side="left", padx=5)
-        self.search_entry = tk.Entry(search_frame, width=30)
+        self.search_entry = tk.Entry(action_frame, width=30)
         self.search_entry.pack(side="left", padx=5)
         self.search_entry.bind("<KeyRelease>", self.filter_products)
         
-        # Add/Delete product buttons
-        buttons_frame = tk.Frame(action_frame)
-        buttons_frame.pack(side="right")
+        # Buttons
+        btn_frame = tk.Frame(action_frame, bg="#f0f0f0")
+        btn_frame.pack(side="right")
         
-        tk.Button(buttons_frame, text="Agregar Producto", command=self.add_product_dialog, 
-                  bg="#2196F3", fg="white", padx=10, pady=3).pack(side="left", padx=5)
-        tk.Button(buttons_frame, text="Eliminar Producto", command=self.delete_product, 
-                  bg="#f44336", fg="white", padx=10, pady=3).pack(side="left", padx=5)
+        tk.Button(btn_frame, 
+                 text="Agregar Producto", 
+                 command=self.add_product_dialog,
+                 bg="#2ECC71", fg="white").pack(side="left", padx=5)
         
-        # Create a frame that will contain the scrollable table
-        # This is the key improvement: using a fixed height for the table container
-        table_container = tk.Frame(main_frame)
-        table_container.pack(fill="both", expand=True, padx=10, pady=10)
+        tk.Button(btn_frame, 
+                 text="Eliminar Producto", 
+                 command=self.delete_product,
+                 bg="#E74C3C", fg="white").pack(side="left", padx=5)
         
-        # Products table with scrollbar
-        table_frame = tk.Frame(table_container)
+        # Products table
+        table_frame = tk.Frame(main_frame)
         table_frame.pack(fill="both", expand=True)
         
-        # Scrollbar
-        scrollbar = tk.Scrollbar(table_frame)
-        scrollbar.pack(side="right", fill="y")
+        scroll_y = tk.Scrollbar(table_frame)
+        scroll_y.pack(side="right", fill="y")
         
-        # Treeview for products
-        self.product_tree = ttk.Treeview(table_frame, columns=("id", "nombre", "unidad", "precio"), 
-                                        show="headings", yscrollcommand=scrollbar.set)
+        self.product_tree = ttk.Treeview(
+            table_frame,
+            columns=("id", "nombre", "unidad", "precio_base", "descuento", "precio_final", "especial"),
+            yscrollcommand=scroll_y.set
+        )
         
         # Configure columns
         self.product_tree.heading("id", text="ID")
         self.product_tree.heading("nombre", text="Producto")
         self.product_tree.heading("unidad", text="Unidad")
-        self.product_tree.heading("precio", text="Precio")
+        self.product_tree.heading("precio_base", text="Precio Base")
+        self.product_tree.heading("descuento", text="Descuento %")
+        self.product_tree.heading("precio_final", text="Precio Final")
+        self.product_tree.heading("especial", text="Especial")
         
-        self.product_tree.column("id", width=50)
-        self.product_tree.column("nombre", width=300)
-        self.product_tree.column("unidad", width=100)
-        self.product_tree.column("precio", width=100)
+        self.product_tree.column("id", width=50, anchor="center")
+        self.product_tree.column("nombre", width=250)
+        self.product_tree.column("unidad", width=80, anchor="center")
+        self.product_tree.column("precio_base", width=100, anchor="e")
+        self.product_tree.column("descuento", width=80, anchor="center")
+        self.product_tree.column("precio_final", width=100, anchor="e")
+        self.product_tree.column("especial", width=80, anchor="center")
         
-        self.product_tree.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=self.product_tree.yview)
+        self.product_tree.pack(fill="both", expand=True)
+        scroll_y.config(command=self.product_tree.yview)
         
-        # Double-click to edit price
-        self.product_tree.bind("<Double-1>", self.edit_price)
+        # Bind events
+        self.product_tree.bind("<Double-1>", self.edit_base_price)
         
-        # Fixed bottom frame for buttons - always visible
-        button_frame = tk.Frame(main_frame)
-        button_frame.pack(fill="x", pady=10, padx=10)
+        # Bottom buttons
+        bottom_frame = tk.Frame(main_frame, bg="#f0f0f0")
+        bottom_frame.pack(fill="x", pady=(10, 0))
         
-        save_button = tk.Button(button_frame, text="Guardar Cambios", font=("Arial", 12), 
-                 command=self.save_all_changes, bg="#4CAF50", fg="white", padx=15, pady=5)
-        save_button.pack(side="right")
+        tk.Button(bottom_frame, 
+                 text="Cancelar Cambios", 
+                 command=self.cancel_changes,
+                 bg="#E67E22", fg="white").pack(side="left", padx=5)
         
-        cancel_button = tk.Button(button_frame, text="Cancelar Cambios", font=("Arial", 12), 
-                 command=self.load_products, bg="#f44336", fg="white", padx=15, pady=5)
-        cancel_button.pack(side="right", padx=10)
+        tk.Button(bottom_frame, 
+                 text="Guardar Cambios", 
+                 command=self.save_all_changes,
+                 bg="#27AE60", fg="white").pack(side="right", padx=5)
         
         # Status bar
         self.status_var = tk.StringVar()
         self.status_var.set("Listo")
-        status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar = tk.Label(self.root, 
+                            textvariable=self.status_var,
+                            bd=1, relief=tk.SUNKEN, 
+                            anchor=tk.W,
+                            font=("Arial", 9))
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
     
+    def load_groups(self):
+        """Cargar grupos de clientes desde la base de datos"""
+        for widget in self.group_buttons_frame.winfo_children():
+            widget.destroy()
+        
+        self.cursor.execute("SELECT id_grupo, clave_grupo, descuento FROM grupo ORDER BY id_grupo")
+        self.groups = self.cursor.fetchall()
+        
+        for group in self.groups:
+            rb = tk.Radiobutton(
+                self.group_buttons_frame,
+                text=f"{group['clave_grupo']} ({group['descuento']}%)",
+                variable=self.current_group,
+                value=group['id_grupo'],
+                command=self.load_products,
+                bg="#f0f0f0"
+            )
+            rb.pack(side="left", padx=5)
+    
     def load_products(self):
-        # Clear existing items
+        """Cargar productos desde la base de datos"""
         for item in self.product_tree.get_children():
             self.product_tree.delete(item)
             
-        tipo_id = self.current_tipo_cliente.get()
+        group_id = self.current_group.get()
+        group_discount = next((g['descuento'] for g in self.groups if g['id_grupo'] == group_id), 0)
         
-        # Get products with prices for selected customer type
         self.cursor.execute("""
-            SELECT p.id_producto, p.nombre_producto, p.unidad, pr.precio, pr.id_precio 
-            FROM producto p
-            LEFT JOIN precio pr ON p.id_producto = pr.id_producto AND pr.id_tipo = %s
-            ORDER BY p.nombre_producto
-        """, (tipo_id,))
+            SELECT id_producto, nombre_producto, unidad_producto, precio_base, es_especial
+            FROM producto ORDER BY nombre_producto
+        """)
+        self.all_products = self.cursor.fetchall()
         
-        productos = self.cursor.fetchall()
-        
-        # Store all products for reference and filtering
-        self.all_products = productos
-        
-        # Insert products into treeview
-        for producto in productos:
-            precio = producto.get('precio')
-            #precio_str = f"${precio:.2f}" if precio is not None else "No establecido"
-            precio_str = "No establecido" if precio is None else f"${float(precio):.2f}"
-            id_precio = str(producto.get('id_precio', '')) if producto.get('id_precio') is not None else ""
+        for product in self.all_products:
+            final_price = product['precio_base'] * (1 - Decimal(group_discount)/100)
             
-            self.product_tree.insert("", "end", 
-                                   values=(producto["id_producto"], 
-                                          producto["nombre_producto"], 
-                                          producto["unidad"], 
-                                          precio_str),
-                                   tags=(id_precio,))
-            
-        self.status_var.set(f"Mostrando {len(productos)} productos para tipo de cliente: {self.get_tipo_name(tipo_id)}")
-    
-    def get_tipo_name(self, tipo_id):
-        self.cursor.execute("SELECT nombre FROM tipo_cliente WHERE id_tipo = %s", (tipo_id,))
-        result = self.cursor.fetchone()
-        return result["nombre"] if result else "Desconocido"
+            self.product_tree.insert("", "end",
+                values=(
+                    product["id_producto"],
+                    product["nombre_producto"],
+                    product["unidad_producto"],
+                    f"${product['precio_base']:.2f}",
+                    f"{group_discount}%",
+                    f"${final_price:.2f}",
+                    "Sí" if product['es_especial'] else "No"
+                ),
+                tags=(str(product['es_especial']),)
+            )
+        
+        self.status_var.set(f"Mostrando {len(self.all_products)} productos")
     
     def filter_products(self, event=None):
         search_text = self.search_entry.get().lower()
         
-        # Clear existing items
         for item in self.product_tree.get_children():
             self.product_tree.delete(item)
         
-        # Filter products
-        for producto in self.all_products:
-            if search_text in producto["nombre_producto"].lower():
-                precio = producto.get('precio')
-                precio_str = f"${precio:.2f}" if precio is not None else "No establecido"
-                id_precio = str(producto.get('id_precio', '')) if producto.get('id_precio') is not None else ""
+        for product in self.all_products:
+            if search_text in product["nombre_producto"].lower():
+                group_id = self.current_group.get()
+                group_discount = next((g['descuento'] for g in self.groups if g['id_grupo'] == group_id), 0)
+                final_price = product['precio_base'] * (1 - Decimal(group_discount)/100)
                 
-                self.product_tree.insert("", "end", 
-                                       values=(producto["id_producto"], 
-                                              producto["nombre_producto"], 
-                                              producto["unidad"], 
-                                              precio_str),
-                                       tags=(id_precio,))
+                self.product_tree.insert("", "end",
+                    values=(
+                        product["id_producto"],
+                        product["nombre_producto"],
+                        product["unidad_producto"],
+                        f"${product['precio_base']:.2f}",
+                        f"{group_discount}%",
+                        f"${final_price:.2f}",
+                        "Sí" if product['es_especial'] else "No"
+                    ),
+                    tags=(str(product['es_especial']),)
+                )
     
-    def edit_price(self, event):
-        # Get selected item
-        item_id = self.product_tree.focus()
-        if not item_id:
-            return
-            
-        # Get current values
-        values = self.product_tree.item(item_id, "values")
-        price_id = self.product_tree.item(item_id, "tags")[0]
-        
-        # If price is not set yet
-        if values[3] == "No establecido":
-            self.set_new_price(values[0])
-            return
-        
-        # Create popup for editing existing price
+    def add_product_dialog(self):
+        """Mostrar popup para agregar nuevo producto"""
         popup = tk.Toplevel(self.root)
-        popup.title("Editar Precio")
-        popup.geometry("400x200")
+        popup.title("Agregar Producto")
         popup.transient(self.root)
         popup.grab_set()
         
-        # Center popup
+        # Variables
+        name_var = tk.StringVar()
+        unit_var = tk.StringVar()
+        price_var = tk.StringVar()
+        stock_var = tk.StringVar(value="0")
+        special_var = tk.BooleanVar(value=False)
+        
+        # Frame principal
+        main_frame = tk.Frame(popup, padx=20, pady=20)
+        main_frame.pack()
+        
+        # Campos del formulario
+        tk.Label(main_frame, text="Nombre del Producto:").grid(row=0, column=0, sticky="w", pady=5)
+        tk.Entry(main_frame, textvariable=name_var, width=30).grid(row=0, column=1, padx=5, pady=5)
+        
+        tk.Label(main_frame, text="Unidad de Medida:").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Combobox(main_frame, textvariable=unit_var, width=27,
+                    values=["kg", "g", "lb", "unidad", "L", "ml", "docena", "paquete"]).grid(row=1, column=1, padx=5, pady=5)
+        
+        tk.Label(main_frame, text="Precio Base:").grid(row=2, column=0, sticky="w", pady=5)
+        tk.Entry(main_frame, textvariable=price_var, width=30).grid(row=2, column=1, padx=5, pady=5)
+        
+        tk.Label(main_frame, text="Stock Inicial:").grid(row=3, column=0, sticky="w", pady=5)
+        tk.Entry(main_frame, textvariable=stock_var, width=30).grid(row=3, column=1, padx=5, pady=5)
+
+        # Checkbox para producto especial
+        tk.Checkbutton(main_frame, 
+                     text="Producto Especial",
+                     variable=special_var).grid(row=3, column=0, columnspan=2, pady=10)
+        
+        # Botones
+        button_frame = tk.Frame(main_frame)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+        
+        tk.Button(button_frame, 
+                text="Guardar", 
+                command=lambda: self.save_new_product(popup, name_var.get(), unit_var.get(), price_var.get(), special_var.get()),
+                bg="#4CAF50", fg="white", width=10).pack(side="left", padx=10)
+        
+        tk.Button(button_frame, 
+                text="Cancelar", 
+                command=popup.destroy,
+                bg="#F44336", fg="white", width=10).pack(side="left", padx=10)
+        
+        # Configuración inicial
+        popup.resizable(False, False)
         popup.update_idletasks()
         width = popup.winfo_width()
         height = popup.winfo_height()
-        x = (popup.winfo_screenwidth() // 2) - (width // 2)
-        y = (popup.winfo_screenheight() // 2) - (height // 2)
-        popup.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        popup.geometry(f'+{x}+{y}')
+    
+    def save_new_product(self, popup, name, unit, price, is_special):
+        """Guardar nuevo producto en la base de datos"""
+        if not name.strip():
+            messagebox.showerror("Error", "El nombre del producto es obligatorio", parent=popup)
+            return
+            
+        if not unit.strip():
+            messagebox.showerror("Error", "La unidad de medida es obligatoria", parent=popup)
+            return
         
-        # Producto info
-        tk.Label(popup, text=f"Producto: {values[1]}", font=("Arial", 12)).pack(pady=5)
-        tk.Label(popup, text=f"Unidad: {values[2]}", font=("Arial", 12)).pack(pady=5)
+        try:
+            price = Decimal(price)
+            if price <= 0:
+                messagebox.showerror("Error", "El precio debe ser mayor que 0", parent=popup)
+                return
+        except:
+            messagebox.showerror("Error", "Ingrese un precio válido", parent=popup)
+            return
         
-        # Current price without $ sign
+        try:
+            stock = Decimal(stock)
+            if stock < 0:
+                messagebox.showerror("Error", "El stock no puede ser negativo", parent=popup)
+                return
+        except:
+            messagebox.showerror("Error", "Ingrese un valor de stock válido", parent=popup)
+            return
+        
+        if is_special and not self.verify_admin_password("crear producto especial"):
+            messagebox.showerror("Permiso denegado", 
+                               "No tiene permisos para crear productos especiales", 
+                               parent=popup)
+            return
+        
+        try:
+            self.cursor.execute("""
+                INSERT INTO producto (nombre_producto, unidad_producto, precio_base, stock, es_especial)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (name.strip(), unit.strip(), price, stock, is_special))
+            
+            self.conn.commit()
+            self.changes_made = True
+            popup.destroy()
+            self.load_products()
+            self.status_var.set(f"Producto '{name}' agregado correctamente")
+            
+        except mysql.connector.Error as err:
+            self.conn.rollback()
+            if err.errno == 1062:  # Duplicate entry
+                messagebox.showerror("Error", "Ya existe un producto con ese nombre", parent=popup)
+            else:
+                messagebox.showerror("Error", f"Error al guardar producto: {err}", parent=popup)
+        except Exception as e:
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error inesperado: {str(e)}", parent=popup)
+    
+    def edit_base_price(self, event):
+        """Editar el precio base de un producto"""
+        item = self.product_tree.focus()
+        if not item:
+            return
+            
+        values = self.product_tree.item(item, "values")
+        product_id = values[0]
+        product_name = values[1]
+        is_special = self.product_tree.item(item, "tags")[0] == "1"
         current_price = values[3].replace("$", "")
         
-        # Price entry
-        price_frame = tk.Frame(popup)
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Editar Precio - {product_name}")
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        # Frame principal
+        main_frame = tk.Frame(popup, padx=20, pady=20)
+        main_frame.pack()
+        
+        tk.Label(main_frame, text=f"Producto: {product_name}").pack(pady=5)
+        tk.Label(main_frame, text=f"Unidad: {values[2]}").pack(pady=5)
+        
+        # Precio
+        price_frame = tk.Frame(main_frame)
         price_frame.pack(pady=10)
         
-        tk.Label(price_frame, text="Nuevo Precio: $", font=("Arial", 12)).pack(side="left")
-        price_entry = tk.Entry(price_frame, width=10, font=("Arial", 12))
-        price_entry.pack(side="left")
+        tk.Label(price_frame, text="Nuevo Precio Base:").pack(side="left")
+        price_entry = tk.Entry(price_frame)
+        price_entry.pack(side="left", padx=5)
         price_entry.insert(0, current_price)
         price_entry.select_range(0, tk.END)
         price_entry.focus_set()
         
-        # Buttons
-        button_frame = tk.Frame(popup)
+        # Botones
+        button_frame = tk.Frame(main_frame)
         button_frame.pack(pady=10)
-        
-        tk.Button(button_frame, text="Guardar", 
-                 command=lambda: self.update_price(popup, price_id, price_entry.get(), item_id, values), 
-                 bg="#4CAF50", fg="white", padx=15, pady=5).pack(side="left", padx=10)
-        
-        tk.Button(button_frame, text="Cancelar", 
-                 command=popup.destroy, 
-                 bg="#f44336", fg="white", padx=15, pady=5).pack(side="left", padx=10)
-    
-    def set_new_price(self, product_id):
-        # Get product info
-        self.cursor.execute("SELECT nombre_producto, unidad FROM producto WHERE id_producto = %s", (product_id,))
-        product = self.cursor.fetchone()
-        
-        if not product:
-            messagebox.showerror("Error", "Producto no encontrado")
-            return
-        
-        # Create popup for setting new price
-        popup = tk.Toplevel(self.root)
-        popup.title("Establecer Precio")
-        popup.geometry("400x300")
-        popup.transient(self.root)
-        popup.grab_set()
-        
-        # Center popup
-        popup.update_idletasks()
-        width = popup.winfo_width()
-        height = popup.winfo_height()
-        x = (popup.winfo_screenwidth() // 2) - (width // 2)
-        y = (popup.winfo_screenheight() // 2) - (height // 2)
-        popup.geometry('{}x{}+{}+{}'.format(width, height, x, y))
-        
-        # Create a main container frame
-        main_frame = tk.Frame(popup)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Product info
-        tk.Label(main_frame, text=f"Producto: {product['nombre_producto']}", font=("Arial", 12)).pack(pady=5)
-        tk.Label(main_frame, text=f"Unidad: {product['unidad']}", font=("Arial", 12)).pack(pady=5)
-        
-        # Get all customer types
-        self.cursor.execute("SELECT id_tipo, nombre FROM tipo_cliente")
-        tipos = self.cursor.fetchall()
-        
-        # Price entries for all customer types
-        entries = {}
-        
-        # Create a frame with fixed height for prices
-        price_container = tk.Frame(main_frame)
-        price_container.pack(fill="x", padx=10, pady=5)
-        
-        # Create price entries in a simple frame
-        price_frame = tk.Frame(price_container)
-        price_frame.pack(fill="x")
-        
-        for tipo in tipos:
-            tipo_frame = tk.Frame(price_frame)
-            tipo_frame.pack(pady=3, fill="x")
-            
-            tk.Label(tipo_frame, text=f"Precio para {tipo['nombre']}:", width=18, anchor="w").pack(side="left")
-            tk.Label(tipo_frame, text="$").pack(side="left")
-            entry = tk.Entry(tipo_frame, width=10)
-            entry.pack(side="left")
-            entries[tipo['id_tipo']] = entry
-        
-        # Focus on current customer type price
-        entries[self.current_tipo_cliente.get()].focus_set()
-        
-        # Buttons - always at the bottom
-        button_frame = tk.Frame(popup)
-        button_frame.pack(side="bottom", fill="x", pady=10)
-        
-        tk.Button(button_frame, text="Guardar", 
-                 command=lambda: self.insert_new_prices(popup, product_id, entries), 
-                 bg="#4CAF50", fg="white", padx=15, pady=5).pack(side="left", padx=10)
-        
-        tk.Button(button_frame, text="Cancelar", 
-                 command=popup.destroy, 
-                 bg="#f44336", fg="white", padx=15, pady=5).pack(side="left", padx=10)
-    
-    def insert_new_prices(self, popup, product_id, entries):
-        try:
-            for tipo_id, entry in entries.items():
-                price_text = entry.get().strip()
-                if price_text:
-                    try:
-                        price = Decimal(price_text)
-                        if price <= 0:
-                            messagebox.showerror("Error", "Los precios deben ser mayores que 0")
-                            return
-                            
-                        # Check if price exists
-                        self.cursor.execute(
-                            "SELECT id_precio FROM precio WHERE id_producto = %s AND id_tipo = %s", 
-                            (product_id, tipo_id)
-                        )
-                        result = self.cursor.fetchone()
-                        
-                        if result:
-                            # Update existing price
-                            self.cursor.execute(
-                                "UPDATE precio SET precio = %s WHERE id_producto = %s AND id_tipo = %s",
-                                (price, product_id, tipo_id)
-                            )
-                        else:
-                            # Insert new price
-                            self.cursor.execute(
-                                "INSERT INTO precio (id_producto, id_tipo, precio) VALUES (%s, %s, %s)",
-                                (product_id, tipo_id, price)
-                            )
-                    except ValueError:
-                        messagebox.showerror("Error", f"Precio inválido para {self.get_tipo_name(tipo_id)}")
-                        return
-            
-            self.conn.commit()
-            self.changes_made = False  # Reset changes flag after successful save
-            self.status_var.set("Precios establecidos correctamente")
-            popup.destroy()
-            self.load_products()
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al guardar precios: {str(e)}")
-            self.conn.rollback()
-        
-    def update_price(self, popup, price_id, new_price, item_id, values):
-        try:
-            # Convert price to decimal
-            new_price = Decimal(new_price)
-            
-            if new_price <= 0:
-                messagebox.showerror("Error", "El precio debe ser mayor que 0")
+
+        def save_changes():
+            if is_special and not self.verify_admin_password(f"editar {product_name}"):
+                popup.lift()
                 return
                 
-            # Update treeview
-            self.product_tree.item(item_id, values=(values[0], values[1], values[2], f"${new_price:.2f}"))
-            
-            # Update in database
-            self.cursor.execute("UPDATE precio SET precio = %s WHERE id_precio = %s", (new_price, price_id))
-            self.conn.commit()
-            
-            self.changes_made = False  # Reset changes flag after successful save
-            self.status_var.set(f"Precio actualizado para {values[1]}")
-            popup.destroy()
-            
-        except ValueError:
-            messagebox.showerror("Error", "Por favor ingresa un precio válido")
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al actualizar: {str(e)}")
-            self.conn.rollback()
-    
-    def add_product_dialog(self):
-        # Create popup for adding new product
-        popup = tk.Toplevel(self.root)
-        popup.title("Agregar Nuevo Producto")
-        popup.geometry("450x400")
-        popup.transient(self.root)
-        popup.grab_set()
+            new_price = price_entry.get()
+            try:
+                new_price = Decimal(new_price)
+                if new_price <= 0:
+                    messagebox.showerror("Error", "El precio debe ser mayor que 0", parent=popup)
+                    return
+                    
+                self.cursor.execute("""
+                    UPDATE producto SET precio_base = %s WHERE id_producto = %s
+                """, (new_price, product_id))
+                
+                self.conn.commit()
+                self.changes_made = True
+                popup.destroy()
+                self.load_products()
+                self.status_var.set(f"Precio de '{product_name}' actualizado")
+                
+            except ValueError:
+                messagebox.showerror("Error", "Ingrese un precio válido", parent=popup)
+            except Exception as e:
+                self.conn.rollback()
+                messagebox.showerror("Error", f"Error al actualizar: {str(e)}", parent=popup)
         
-        # Center popup
+        tk.Button(button_frame, 
+                text="Guardar", 
+                command=save_changes,
+                bg="#4CAF50", fg="white").pack(side="left", padx=10)
+        
+        tk.Button(button_frame, 
+                text="Cancelar", 
+                command=popup.destroy,
+                bg="#F44336", fg="white").pack(side="left", padx=10)
+        
+        popup.resizable(False, False)
         popup.update_idletasks()
         width = popup.winfo_width()
         height = popup.winfo_height()
-        x = (popup.winfo_screenwidth() // 2) - (width // 2)
-        y = (popup.winfo_screenheight() // 2) - (height // 2)
-        popup.geometry('{}x{}+{}+{}'.format(width, height, x, y))
-        
-        # Create main frame to organize content
-        main_frame = tk.Frame(popup)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Product info fields
-        tk.Label(main_frame, text="Agregar Nuevo Producto", font=("Arial", 14, "bold")).pack(pady=10)
-        
-        # Name field
-        name_frame = tk.Frame(main_frame)
-        name_frame.pack(fill="x", pady=5, padx=20)
-        tk.Label(name_frame, text="Nombre del Producto:", width=20, anchor="w").pack(side="left")
-        name_entry = tk.Entry(name_frame, width=30)
-        name_entry.pack(side="left", padx=5, fill="x", expand=True)
-        name_entry.focus_set()
-        
-        # Unit field
-        unit_frame = tk.Frame(main_frame)
-        unit_frame.pack(fill="x", pady=5, padx=20)
-        tk.Label(unit_frame, text="Unidad:", width=20, anchor="w").pack(side="left")
-        
-        # Get common units for dropdown
-        common_units = ["kg", "pz", "manojo", "caja", "litro", "docena"]
-        unit_var = tk.StringVar()
-        unit_combo = ttk.Combobox(unit_frame, textvariable=unit_var, values=common_units)
-        unit_combo.pack(side="left", padx=5, fill="x", expand=True)
-        
-        # Create a frame with fixed height for price entries
-        price_container = tk.Frame(main_frame)
-        price_container.pack(fill="x", padx=20, pady=5)
-        
-        # Label frame for prices with fixed height
-        price_label_frame = tk.LabelFrame(price_container, text="Precios por Tipo de Cliente", padx=10, pady=5)
-        price_label_frame.pack(fill="x")
-        
-        # Get all customer types
-        self.cursor.execute("SELECT id_tipo, nombre FROM tipo_cliente")
-        tipos = self.cursor.fetchall()
-        
-        # Create price entries
-        price_entries = {}
-        for tipo in tipos:
-            price_frame = tk.Frame(price_label_frame)
-            price_frame.pack(fill="x", pady=2)
-            
-            tk.Label(price_frame, text=f"Precio {tipo['nombre']}:", width=15, anchor="w").pack(side="left")
-            tk.Label(price_frame, text="$").pack(side="left")
-            price_entry = tk.Entry(price_frame, width=10)
-            price_entry.pack(side="left", padx=5)
-            price_entries[tipo['id_tipo']] = price_entry
-        
-        # Buttons - in a separate frame that's packed at the bottom
-        # This is key to ensure buttons are always visible
-        button_frame = tk.Frame(popup)
-        button_frame.pack(side="bottom", fill="x", pady=15)
-        
-        tk.Button(button_frame, text="Guardar Producto", 
-                 command=lambda: self.save_new_product(popup, name_entry.get(), unit_var.get(), price_entries), 
-                 bg="#4CAF50", fg="white", padx=10, pady=5).pack(side="left", padx=10)
-        
-        tk.Button(button_frame, text="Cancelar", 
-                 command=popup.destroy, 
-                 bg="#f44336", fg="white", padx=10, pady=5).pack(side="left", padx=10)
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        popup.geometry(f'+{x}+{y}')
     
-    def save_new_product(self, popup, name, unit, price_entries):
-        # Validate fields
-        if not name.strip():
-            messagebox.showerror("Error", "El nombre del producto es obligatorio")
-            return
-            
-        if not unit.strip():
-            messagebox.showerror("Error", "La unidad de medida es obligatoria")
-            return
-        
-        # Start transaction
+    def save_base_price(self, popup, product_id, product_name, new_price):
+        """Guardar el precio base editado"""
         try:
-            # Insert new product
-            self.cursor.execute(
-                "INSERT INTO producto (nombre_producto, unidad) VALUES (%s, %s)",
-                (name, unit)
-            )
+            new_price = Decimal(new_price)
+            if new_price <= 0:
+                messagebox.showerror("Error", "El precio debe ser mayor que 0", parent=popup)
+                return
+                
+            self.cursor.execute("""
+                UPDATE producto SET precio_base = %s WHERE id_producto = %s
+            """, (new_price, product_id))
             
-            # Get product ID
-            new_product_id = self.cursor.lastrowid
-            
-            # Insert prices for each customer type
-            for tipo_id, entry in price_entries.items():
-                price_text = entry.get().strip()
-                if price_text:
-                    try:
-                        price = Decimal(price_text)
-                        if price <= 0:
-                            raise ValueError("Precio debe ser mayor que 0")
-                            
-                        self.cursor.execute(
-                            "INSERT INTO precio (id_producto, id_tipo, precio) VALUES (%s, %s, %s)",
-                            (new_product_id, tipo_id, price)
-                        )
-                    except ValueError:
-                        messagebox.showerror("Error", f"Precio inválido para {self.get_tipo_name(tipo_id)}")
-                        self.conn.rollback()
-                        return
-            
-            # Commit changes
             self.conn.commit()
-            self.changes_made = False  # Reset changes flag after successful save
-            
-            messagebox.showinfo("Éxito", f"Producto '{name}' agregado correctamente")
-            self.status_var.set(f"Producto '{name}' agregado correctamente")
+            self.changes_made = True
             popup.destroy()
-            
-            # Refresh product list
             self.load_products()
+            self.status_var.set(f"Precio de '{product_name}' actualizado")
             
+        except ValueError:
+            messagebox.showerror("Error", "Ingrese un precio válido", parent=popup)
         except Exception as e:
-            messagebox.showerror("Error", f"Error al agregar producto: {str(e)}")
             self.conn.rollback()
+            messagebox.showerror("Error", f"Error al actualizar: {str(e)}", parent=popup)
+    
+    def edit_group_discount(self):
+        """Editar el descuento de un grupo"""
+        group_id = self.current_group.get()
+        group = next((g for g in self.groups if g['id_grupo'] == group_id), None)
+        
+        if not group:
+            return
+            
+        # Primero crea el popup    
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Editar Descuento - {group['clave_grupo']}")
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        # Frame principal
+        main_frame = tk.Frame(popup, padx=20, pady=20)
+        main_frame.pack()
+        
+        tk.Label(main_frame, text=f"Grupo: {group['clave_grupo']}").pack(pady=5)
+        
+        # Descuento
+        discount_frame = tk.Frame(main_frame)
+        discount_frame.pack(pady=10)
+        
+        tk.Label(discount_frame, text="Nuevo Descuento (%):").pack(side="left")
+        discount_entry = tk.Entry(discount_frame, width=10)
+        discount_entry.pack(side="left", padx=5)
+        discount_entry.insert(0, group['descuento'])
+        discount_entry.select_range(0, tk.END)
+        discount_entry.focus_set()
+        
+        # Botones
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(pady=10)
+        
+        def save_changes():
+            if group['clave_grupo'] != "STANDARD" and not self.verify_admin_password("editar descuentos"):
+                popup.lift()
+                return
+                
+            new_discount = discount_entry.get()
+            try:
+                new_discount = Decimal(new_discount)
+                if new_discount < 0 or new_discount >= 100:
+                    messagebox.showerror("Error", "El descuento debe estar entre 0 y 100", parent=popup)
+                    return
+                    
+                self.cursor.execute("""
+                    UPDATE grupo SET descuento = %s WHERE id_grupo = %s
+                """, (new_discount, group_id))
+                
+                self.conn.commit()
+                self.changes_made = True
+                popup.destroy()
+                self.load_groups()
+                self.load_products()
+                self.status_var.set("Descuento actualizado correctamente")
+                
+            except ValueError:
+                messagebox.showerror("Error", "Ingrese un porcentaje válido", parent=popup)
+            except Exception as e:
+                self.conn.rollback()
+                messagebox.showerror("Error", f"Error al actualizar: {str(e)}", parent=popup)
+
+        tk.Button(button_frame, 
+            text="Guardar", 
+            command=save_changes,
+            bg="#4CAF50", fg="white").pack(side="left", padx=10)
+    
+        tk.Button(button_frame, 
+                text="Cancelar", 
+                command=popup.destroy,
+                bg="#F44336", fg="white").pack(side="left", padx=10)
+        
+        popup.resizable(False, False)
+        popup.update_idletasks()
+        width = popup.winfo_width()
+        height = popup.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        popup.geometry(f'+{x}+{y}')
+    
+    def save_group_discount(self, popup, group_id, new_discount):
+        """Guardar el descuento editado"""
+        try:
+            new_discount = Decimal(new_discount)
+            if new_discount < 0 or new_discount >= 100:
+                messagebox.showerror("Error", "El descuento debe estar entre 0 y 100", parent=popup)
+                return
+                
+            self.cursor.execute("""
+                UPDATE grupo SET descuento = %s WHERE id_grupo = %s
+            """, (new_discount, group_id))
+            
+            self.conn.commit()
+            self.changes_made = True
+            popup.destroy()
+            self.load_groups()
+            self.load_products()
+            self.status_var.set("Descuento actualizado correctamente")
+            
+        except ValueError:
+            messagebox.showerror("Error", "Ingrese un porcentaje válido", parent=popup)
+        except Exception as e:
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al actualizar: {str(e)}", parent=popup)
     
     def delete_product(self):
-        # Get selected product
-        item_id = self.product_tree.focus()
-        if not item_id:
-            messagebox.showwarning("Advertencia", "Por favor selecciona un producto para eliminar")
+        """Eliminar un producto"""
+        item = self.product_tree.focus()
+        if not item:
+            messagebox.showwarning("Advertencia", "Seleccione un producto para eliminar")
             return
             
-        # Get product info
-        values = self.product_tree.item(item_id, "values")
+        values = self.product_tree.item(item, "values")
         product_id = values[0]
         product_name = values[1]
+        is_special = self.product_tree.item(item, "tags")[0] == "1"
         
-        # Confirm deletion
-        if not messagebox.askyesno("Confirmar Eliminación", 
-                                 f"¿Estás seguro de eliminar el producto '{product_name}'?\n\n"
-                                 f"Esta acción eliminará todas las referencias al producto, "
-                                 f"incluyendo los precios y detalles de facturas existentes."):
+        if is_special and not self.verify_admin_password(f"eliminar {product_name}"):
+            return
+        
+        if not messagebox.askyesno("Confirmar", f"¿Eliminar el producto '{product_name}'?"):
             return
             
-        # Check if product is referenced in any invoice
-        self.cursor.execute(
-            "SELECT COUNT(*) as count FROM detalle_factura WHERE id_producto = %s", 
-            (product_id,)
-        )
-        result = self.cursor.fetchone()
-        
-        if result and result['count'] > 0:
-            if not messagebox.askyesno("Advertencia", 
-                                     f"El producto '{product_name}' está siendo utilizado en {result['count']} "
-                                     f"facturas existentes. Si eliminas este producto, esas facturas "
-                                     f"pueden quedar inconsistentes.\n\n¿Estás seguro de continuar?"):
-                return
-        
-        # Delete product and related records
         try:
-            # First delete price records
-            self.cursor.execute("DELETE FROM precio WHERE id_producto = %s", (product_id,))
+            # Verificar si el producto está en facturas
+            self.cursor.execute("""
+                SELECT COUNT(*) as count FROM detalle_factura WHERE id_producto = %s
+            """, (product_id,))
+            result = self.cursor.fetchone()
             
-            # Then delete any detalle_factura records (if user confirmed)
-            self.cursor.execute("DELETE FROM detalle_factura WHERE id_producto = %s", (product_id,))
+            if result['count'] > 0:
+                confirm = messagebox.askyesno(
+                    "Advertencia", 
+                    f"Este producto aparece en {result['count']} facturas. ¿Eliminar de todos modos?"
+                )
+                if not confirm:
+                    return
             
-            # Finally delete the product
+            # Eliminar producto
             self.cursor.execute("DELETE FROM producto WHERE id_producto = %s", (product_id,))
-            
-            # Commit changes
             self.conn.commit()
-            self.changes_made = False  # Reset changes flag after successful save
-            
-            messagebox.showinfo("Éxito", f"Producto '{product_name}' eliminado correctamente")
-            self.status_var.set(f"Producto '{product_name}' eliminado correctamente")
-            
-            # Refresh product list
+            self.changes_made = True
             self.load_products()
+            self.status_var.set(f"Producto '{product_name}' eliminado")
             
         except Exception as e:
-            messagebox.showerror("Error", f"Error al eliminar producto: {str(e)}")
             self.conn.rollback()
+            messagebox.showerror("Error", f"No se pudo eliminar: {str(e)}")
+    
+    def cancel_changes(self):
+        """Cancelar todos los cambios no guardados"""
+        if self.changes_made:
+            if messagebox.askyesno("Cancelar Cambios", "¿Descartar todos los cambios no guardados?"):
+                self.conn.rollback()
+                self.changes_made = False
+                self.load_groups()
+                self.load_products()
+                self.status_var.set("Cambios cancelados")
+        else:
+            self.status_var.set("No hay cambios pendientes")
     
     def save_all_changes(self):
+        """Guardar todos los cambios en la base de datos"""
         try:
             self.conn.commit()
-            self.changes_made = False  # Reset changes flag after successful save
-            messagebox.showinfo("Éxito", "Todos los cambios han sido guardados")
-            self.status_var.set("Todos los cambios guardados exitosamente")
+            self.changes_made = False
+            self.status_var.set("Todos los cambios guardados")
+            messagebox.showinfo("Éxito", "Cambios guardados correctamente")
         except Exception as e:
-            messagebox.showerror("Error", f"Error al guardar cambios: {str(e)}")
             self.conn.rollback()
+            messagebox.showerror("Error", f"No se pudieron guardar los cambios: {str(e)}")
+    
+    def verify_admin_password(self, action):
+        """Verificar contraseña de administrador"""
+        password = simpledialog.askstring(
+            "Autenticación Requerida",
+            f"Para {action} se requiere contraseña de administrador:",
+            show="*",
+            parent=self.root
+        )
+        
+        if not password:
+            return False
             
-    def on_closing(self):
         try:
-            # Only ask if there are unsaved changes
-            if self.changes_made:
-                if messagebox.askyesno("Salir", "¿Hay cambios sin guardar. ¿Deseas guardarlos antes de salir?"):
-                    self.save_all_changes()
+            auth_result = self.auth_manager.authenticate("admin", password)
+            return auth_result['success']
         except:
-            pass
-            
+            return False
+    
+    def on_closing(self):
+        """Manejar el cierre de la ventana"""
+        if self.changes_made:
+            if messagebox.askyesno("Cambios sin guardar", "¿Guardar cambios antes de salir?"):
+                self.save_all_changes()
+        
         self.conn.close()
         self.root.destroy()
 

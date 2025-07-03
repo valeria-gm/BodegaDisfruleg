@@ -25,18 +25,8 @@ CREATE TABLE producto (
     nombre_producto VARCHAR(250) NOT NULL,
     unidad_producto VARCHAR(50) NOT NULL,
     stock DECIMAL(10,2) NOT NULL,
-    es_especial BOOLEAN DEFAULT FALSE
-);
-
--- Tabla PRECIO
-CREATE TABLE precio (
-    id_precio INT AUTO_INCREMENT PRIMARY KEY,
-    id_producto INT NOT NULL,
-    id_grupo INT NOT NULL,
-    precio DECIMAL(10,2) NOT NULL,
-    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (id_producto) REFERENCES producto(id_producto) ON DELETE CASCADE,
-    FOREIGN KEY (id_grupo) REFERENCES grupo(id_grupo) ON DELETE CASCADE
+    es_especial BOOLEAN DEFAULT FALSE,
+    precio_base DECIMAL(10,2) NOT NULL 
 );
 
 -- Tabla FACTURA
@@ -68,3 +58,32 @@ CREATE TABLE compra (
     FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
 );
 
+-- Crear tabla de usuarios
+CREATE TABLE usuarios_sistema (
+    id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    nombre_completo VARCHAR(100) NOT NULL,
+    rol ENUM('admin', 'usuario') DEFAULT 'usuario',
+    activo BOOLEAN DEFAULT TRUE,
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ultimo_acceso TIMESTAMP NULL,
+    intentos_fallidos INT DEFAULT 0,
+    bloqueado_hasta TIMESTAMP NULL
+);
+
+-- Crear tabla de logs
+CREATE TABLE log_accesos (
+    id_log INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NULL,
+    username_intento VARCHAR(50),
+    ip_address VARCHAR(45) DEFAULT 'localhost',
+    exito BOOLEAN,
+    fecha_intento TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    detalle VARCHAR(255),
+    FOREIGN KEY (id_usuario) REFERENCES usuarios_sistema(id_usuario) ON DELETE SET NULL
+);
+
+-- Crear índices
+CREATE INDEX idx_username ON usuarios_sistema(username);
+CREATE INDEX idx_activo ON usuarios_sistema(activo);
