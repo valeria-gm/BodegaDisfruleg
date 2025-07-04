@@ -1,11 +1,14 @@
 import os
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, simpledialog
 from fpdf import FPDF
 from datetime import datetime
 import mysql.connector
 from conexion import conectar
 from decimal import Decimal, InvalidOperation
+import hashlib
+import json
+from auth_manager import AuthManager
 
 # Obtener conexión y cursor
 conn = conectar()
@@ -25,12 +28,13 @@ if not os.path.exists("recibos"):
 
 class ReciboAppMejorado:
     def __init__(self, root, user_data):
+        self.auth_manager = AuthManager()
         self.root = root
         self.root.title("Generador de Recibos - Mejorado")
         self.root.geometry("1000x700")
 
         self.user_data = user_data if isinstance(user_data, dict) else json.loads(user_data)
-        self.es_admin = (user_data['rol'] == 'admin')
+        self.es_admin = (self.user_data['rol'] == 'admin')
 
         self.cliente_seleccionado = tk.StringVar()
         self.cliente_id = None
@@ -69,7 +73,6 @@ class ReciboAppMejorado:
         
         # Barra de estado
         self.status_var = tk.StringVar()
-        #self.status_var.set("Listo - Seleccione un cliente para comenzar")
         self.status_var.set(f"Usuario: {self.user_data['nombre_completo']} | Rol: {self.user_data['rol']} | Seleccione un cliente")
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
@@ -233,20 +236,17 @@ class ReciboAppMejorado:
                 self.descuento_cliente = Decimal(str(cliente["descuento"])) if cliente["descuento"] else Decimal('0')
                 break
         
-        # Obtener productos con precios base (solo especiales si es admin)
+        # MODIFICACIÓN: Ahora cargamos TODOS los productos, incluyendo los especiales
         query = """
             SELECT p.id_producto, p.nombre_producto, p.unidad_producto, 
                    p.precio_base, p.es_especial
             FROM producto p
-            WHERE p.es_especial = FALSE
-        """ + (" OR 1=1" if self.es_admin else "")  # Simplificación para admins
-        
-
+            ORDER BY p.es_especial ASC, p.nombre_producto ASC
+        """
         
         cursor.execute(query)
         self.todos_productos = cursor.fetchall()
         self.mostrar_productos()
-        
         
         # Limpiar carrito al cambiar cliente
         self.limpiar_carrito()
@@ -272,14 +272,19 @@ class ReciboAppMejorado:
             precio_final = precio_base * (1 - self.descuento_cliente / 100)
 
             # Verificar si ya está en el carrito
-            en_carrito = "✓ En carrito" if producto['id_producto'] in self.carrito else "Doble-click para agregar"
+            if producto['id_producto'] in self.carrito:
+                en_carrito = "✓ En carrito"
+            else:
+                en_carrito = "Doble-click para agregar"
             
-            # Marcar productos especiales
+            # MODIFICACIÓN: Marcar productos especiales de forma más visible
+            nombre_producto = producto['nombre_producto']
             if producto['es_especial']:
+                nombre_producto = f"🔒 {nombre_producto}"
                 en_carrito = "ESPECIAL - " + en_carrito
 
             self.productos_tree.insert("", "end", 
-                                     values=(producto['nombre_producto'],
+                                     values=(nombre_producto,
                                             producto['unidad_producto'],
                                             f"${precio_final:.2f}",
                                             en_carrito),
@@ -305,6 +310,93 @@ class ReciboAppMejorado:
         self.search_var.set("")
         self.mostrar_productos()
 
+    def verificar_password_admin(self):
+        """Verificar contraseña de administrador"""
+        class AdminPasswordDialog:
+            def __init__(self, parent, app_instance):
+                self.parent = parent
+                self.app_instance = app_instance
+                self.result = None
+                self.dialog = tk.Toplevel(parent)
+                self.dialog.title("Autenticación de Administrador")
+                self.dialog.geometry("400x250")
+                self.dialog.transient(parent)
+                self.dialog.grab_set()
+                
+                # Centrar la ventana
+                self.dialog.geometry("+%d+%d" % (parent.winfo_rootx() + 50, parent.winfo_rooty() + 50))
+                
+                # Marco principal
+                main_frame = tk.Frame(self.dialog)
+                main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+                
+                # Título
+                title_label = tk.Label(main_frame, text="🔒 Producto Especial", 
+                                     font=("Arial", 14, "bold"), fg="#f44336")
+                title_label.pack(pady=(0, 10))
+                
+                # Mensaje
+                message_label = tk.Label(main_frame, 
+                                       text="Este producto requiere permisos de administrador.\nIngrese las credenciales de un administrador:",
+                                       font=("Arial", 10), justify="center")
+                message_label.pack(pady=(0, 20))
+                
+                # Usuario
+                tk.Label(main_frame, text="Usuario:", font=("Arial", 11)).pack(anchor="w")
+                self.username_var = tk.StringVar()
+                self.username_entry = tk.Entry(main_frame, textvariable=self.username_var, width=30)
+                self.username_entry.pack(fill="x", pady=(0, 10))
+                
+                # Contraseña
+                tk.Label(main_frame, text="Contraseña:", font=("Arial", 11)).pack(anchor="w")
+                self.password_var = tk.StringVar()
+                self.password_entry = tk.Entry(main_frame, textvariable=self.password_var, show="*", width=30)
+                self.password_entry.pack(fill="x", pady=(0, 20))
+                
+                # Botones
+                button_frame = tk.Frame(main_frame)
+                button_frame.pack(fill="x")
+                
+                tk.Button(button_frame, text="Cancelar", command=self.cancelar,
+                         bg="#f44336", fg="white", padx=15, pady=5).pack(side="right", padx=5)
+                tk.Button(button_frame, text="Verificar", command=self.verificar,
+                         bg="#4CAF50", fg="white", padx=15, pady=5).pack(side="right", padx=5)
+                
+                # Focus y bind
+                self.username_entry.focus_set()
+                self.password_entry.bind("<Return>", lambda e: self.verificar())
+                self.dialog.bind("<Escape>", lambda e: self.cancelar())
+                
+                # Hacer modal
+                self.dialog.wait_window()
+            
+            def verificar(self):
+                username = self.username_var.get().strip()
+                password = self.password_var.get().strip()
+                
+                if not username or not password:
+                    messagebox.showerror("Error", "Por favor ingrese usuario y contraseña")
+                    return
+                
+                auth_result = self.parent.auth_manager.authenticate(username, password)
+
+                if auth_result['success'] and auth_result['user_data']['rol'] == 'admin':
+                    self.result = True
+                    self.dialog.destroy()
+                    return
+                messagebox.showerror("Error", auth_result.get('message', 'Credenciales inválidas'))
+                self.password_entry.delete(0, tk.END)
+                self.password_entry.focus_set()
+
+            
+            def cancelar(self):
+                self.result = False
+                self.dialog.destroy()
+        
+        # Crear diálogo y obtener resultado
+        dialog = AdminPasswordDialog(self.root, self)
+        return dialog.result
+
     def agregar_producto_rapido(self, event):
         """Agregar producto al carrito con doble click"""
         item_seleccionado = self.productos_tree.focus()
@@ -321,10 +413,14 @@ class ReciboAppMejorado:
                 messagebox.showerror("Error", "Producto no encontrado")
                 return
 
-            # Verificar si es producto especial y el usuario no es admin  
+            # MODIFICACIÓN: Verificar si es producto especial y el usuario no es admin
             if producto.get('es_especial', False) and not self.es_admin:
-                messagebox.showerror("Acceso denegado", "Requiere permisos de administrador")
-                return
+                # Solicitar autenticación de administrador
+                if not self.verificar_password_admin():
+                    return  # Usuario canceló o falló la autenticación
+                
+                # Si llegamos aquí, la autenticación fue exitosa
+                messagebox.showinfo("Autorizado", "Acceso autorizado. Puede agregar el producto especial.")
             
             # Si ya está en carrito, preguntar si quiere editar
             if producto_id in self.carrito:
@@ -338,7 +434,6 @@ class ReciboAppMejorado:
 
         except Exception as e:
             messagebox.showerror("Error", f"Ocurrió un error: {str(e)}")
-            #print(f"Error en agregar_producto_rapido: {e}")
 
     def mostrar_dialogo_seguro(self, producto):
         """Mostrar diálogo para ingresar cantidad"""
@@ -356,10 +451,13 @@ class ReciboAppMejorado:
             descuento = Decimal(str(self.descuento_cliente)) if self.grupo_cliente_id else Decimal('0')
             monto_descuento = precio_base * (descuento / Decimal('100'))
             precio_con_descuento = precio_base - monto_descuento
-        
             
             # Widgets usando solo grid()
-            tk.Label(dialogo, text=producto['nombre_producto'], 
+            nombre_producto = producto['nombre_producto']
+            if producto.get('es_especial', False):
+                nombre_producto = f"🔒 {nombre_producto} (ESPECIAL)"
+            
+            tk.Label(dialogo, text=nombre_producto, 
                 font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(20, 5))
         
             tk.Label(dialogo, text=f"Precio base: ${float(precio_base):.2f}", 
@@ -377,23 +475,23 @@ class ReciboAppMejorado:
                     font=("Arial", 10)).grid(row=4, column=0, columnspan=2, sticky="w", padx=20)
             
             # Entrada de cantidad
-            tk.Label(dialogo, text="Cantidad:", font=("Arial", 11)).grid(row=2, column=0, sticky="e")
+            tk.Label(dialogo, text="Cantidad:", font=("Arial", 11)).grid(row=5, column=0, sticky="e", padx=20)
             
-            cantidad_var = tk.StringVar(value="1.0")  # Usar StringVar para mejor control
+            cantidad_var = tk.StringVar(value="1.0")
             cantidad_entry = tk.Entry(dialogo, textvariable=cantidad_var, 
                                     width=10, font=("Arial", 11))
-            cantidad_entry.grid(row=2, column=1, sticky="w", padx=5)
+            cantidad_entry.grid(row=5, column=1, sticky="w", padx=5)
             cantidad_entry.focus_set()
             cantidad_entry.select_range(0, tk.END)
             
             # Total
             total_var = tk.StringVar(value=f"Total: ${float(precio_con_descuento):.2f}")
             tk.Label(dialogo, textvariable=total_var, 
-                    font=("Arial", 11, "bold"), fg="#2196F3").grid(row=5, column=0, columnspan=2, pady=(10, 20))
+                    font=("Arial", 11, "bold"), fg="#2196F3").grid(row=6, column=0, columnspan=2, pady=(10, 20))
         
-             # Frame para botones (usando grid dentro de este frame)
+            # Frame para botones
             botones_frame = tk.Frame(dialogo)
-            botones_frame.grid(row=5, column=0, columnspan=2, pady=(0, 15))
+            botones_frame.grid(row=7, column=0, columnspan=2, pady=(0, 15))
                 
             def agregar_al_carrito():
                 try:
@@ -406,7 +504,7 @@ class ReciboAppMejorado:
                     self.carrito[producto['id_producto']] = {
                         'producto': producto,
                         'cantidad': cantidad,
-                        'precio_base': float(precio_base),  # Guardamos ambos precios
+                        'precio_base': float(precio_base),
                         'precio_final': float(precio_con_descuento),
                         'monto_descuento': float(monto_descuento)
                     }
@@ -439,7 +537,6 @@ class ReciboAppMejorado:
                     total_var.set("Total: $0.00")
             
             cantidad_var.trace("w", calcular_total)
-            #calcular_total()
             
             # Asegurar que la ventana esté completamente inicializada
             dialogo.update_idletasks()
@@ -451,7 +548,7 @@ class ReciboAppMejorado:
             y = (dialogo.winfo_screenheight() // 2) - (height // 2)
             dialogo.geometry(f"+{x}+{y}")
 
-            # Hacer modal al final (esto es clave)
+            # Hacer modal al final
             dialogo.grab_set()
             
         except Exception as e:
@@ -476,29 +573,29 @@ class ReciboAppMejorado:
             subtotal = cantidad * precio_final
             total_general += subtotal
             
+            # Marcar productos especiales en el carrito
+            nombre_producto = producto['nombre_producto']
+            if producto.get('es_especial', False):
+                nombre_producto = f"🔒 {nombre_producto}"
+            
             self.carrito_tree.insert("", "end",
                                     values=(
-                                        producto['nombre_producto'],
+                                        nombre_producto,
                                         f"{float(cantidad):.2f}",
                                         producto['unidad_producto'],
-                                        f"${float(precio_base):.2f}",  # Mostramos precio base
-                                        f"-${float(item['monto_descuento']):.2f}" if self.grupo_cliente_id else "$0.00",  # Monto descuento
-                                        f"${float(precio_final):.2f}",  # Precio con descuento
-                                        f"${float(subtotal):.2f}"  # Subtotal con descuento aplicado
+                                        f"${float(precio_base):.2f}",
+                                        f"-${float(item['monto_descuento']):.2f}" if self.grupo_cliente_id else "$0.00",
+                                        f"${float(precio_final):.2f}",
+                                        f"${float(subtotal):.2f}"
                                     ),
                                     tags=(str(producto_id),))
-          # Configurar las columnas del Treeview (asegúrate de que coincidan)
-        #self.carrito_tree['columns'] = ("producto", "cantidad", "unidad", "precio_base", "descuento", "precio_final", "subtotal")
+        
         self.carrito_tree.heading("precio_base", text="Precio Base")
         self.carrito_tree.heading("descuento", text="Descuento")
         self.carrito_tree.heading("precio_final", text="Precio Final")
         
         self.total_var.set(f"Total: ${float(total_general):.2f}")
         self.status_var.set(f"Carrito: {len(self.carrito)} productos | Total: ${float(total_general):.2f}")
-        
-        # Actualizar status
-        items_count = len(self.carrito)
-        self.status_var.set(f"Carrito: {items_count} productos - Total: ${float(total_general):.2f}")
 
     def editar_cantidad_carrito(self, event):
         """Editar cantidad desde el carrito"""
@@ -519,7 +616,7 @@ class ReciboAppMejorado:
         cantidad_actual = item['cantidad']
         
         # Crear diálogo simple
-        nueva_cantidad = tk.simpledialog.askfloat(
+        nueva_cantidad = simpledialog.askfloat(
             "Editar Cantidad",
             f"Nueva cantidad para {producto['nombre_producto']}:",
             initialvalue=cantidad_actual,
@@ -527,7 +624,7 @@ class ReciboAppMejorado:
         )
         
         if nueva_cantidad:
-            self.carrito[producto_id]['cantidad'] = Decimal(str(nueva_cantidad))  # Convertir a Decimal
+            self.carrito[producto_id]['cantidad'] = Decimal(str(nueva_cantidad))
             self.actualizar_carrito()
 
     def eliminar_del_carrito(self):
@@ -543,7 +640,7 @@ class ReciboAppMejorado:
         if messagebox.askyesno("Confirmar", f"¿Eliminar {producto_nombre} del carrito?"):
             del self.carrito[producto_id]
             self.actualizar_carrito()
-            self.mostrar_productos()  # Actualizar indicador "en carrito"
+            self.mostrar_productos()
 
     def limpiar_carrito(self):
         """Limpiar todo el carrito"""
@@ -577,12 +674,16 @@ class ReciboAppMejorado:
         total_general = Decimal('0')
         for item in self.carrito.values():
             producto = item['producto']
-            cantidad = float(item['cantidad'])  # Convertir a float
-            precio_final = float(item['precio_final'])  # Convertir a float
+            cantidad = float(item['cantidad'])
+            precio_final = float(item['precio_final'])
             subtotal = cantidad * precio_final
             total_general += Decimal(str(subtotal))
             
-            content += f"{producto['nombre_producto']}\n"
+            nombre_producto = producto['nombre_producto']
+            if producto.get('es_especial', False):
+                nombre_producto = f"🔒 {nombre_producto} (ESPECIAL)"
+            
+            content += f"{nombre_producto}\n"
             content += f"  {cantidad:.2f} {producto['unidad_producto']} x ${precio_final:.2f} = ${subtotal:.2f}\n\n"
         
         content += "="*50 + "\n"
@@ -618,24 +719,7 @@ class ReciboAppMejorado:
     
         if not messagebox.askyesno("Confirmar", f"¿Generar recibo por ${total_general:.2f}?"):
             return
-    
-        # Confirmar generación
-        total_items = len(self.carrito)
-        total_general = sum(float(item['cantidad']) * float(item['precio_final']) for item in self.carrito.values())
         
-        """
-        mensaje = f"¿Generar recibo?\n\n"
-        mensaje += f"Cliente: {self.cliente_seleccionado.get()}\n"
-        mensaje += f"Productos: {total_items}\n"
-        if self.grupo_cliente_id:
-            mensaje += f"Descuento aplicado: {float(self.descuento_cliente):.1f}%\n"
-        mensaje += f"Total: ${total_general:.2f}"
-        
-        if not messagebox.askyesno("Confirmar Recibo", mensaje):
-            return
-        """
-        
-        # Generar PDF
         # Generar PDF
         self.crear_pdf(
             [(item['producto']['nombre_producto'], 
@@ -644,7 +728,7 @@ class ReciboAppMejorado:
             float(item['precio_final']), 
             float(item['subtotal'])) for item in productos_finales],
             total_general
-    )
+        )
         
         # Guardar en BD si está activado
         if self.guardar_en_bd.get():
@@ -684,7 +768,9 @@ class ReciboAppMejorado:
 
         pdf.set_font("Arial", size=10)
         for nombre, cantidad, unidad, precio_unitario, total in productos_finales:
-            pdf.cell(60, 10, nombre.encode('latin1', 'replace').decode('latin1'), 1)
+            # Limpiar caracteres especiales para PDF
+            nombre_limpio = nombre.replace('🔒', '[ESPECIAL]').encode('latin1', 'replace').decode('latin1')
+            pdf.cell(60, 10, nombre_limpio, 1)
             pdf.cell(30, 10, f"{cantidad:.2f}", 1)
             pdf.cell(30, 10, f"{unidad}", 1)
             pdf.cell(30, 10, f"${precio_unitario:.2f}", 1)
@@ -718,16 +804,14 @@ class ReciboAppMejorado:
             
             # Insertar detalles de factura
             for item in productos_finales:
-                # Asegurarnos que estamos accediendo correctamente al diccionario
-                if isinstance(item, dict):  # Si es un diccionario
+                if isinstance(item, dict):
                     id_producto = item['producto']['id_producto']
                     cantidad = item['cantidad']
                     precio = item['precio_final']
-                else:  # Si es una tupla (para compatibilidad con versiones anteriores)
+                else:
                     id_producto = item[0]
                     cantidad = item[1]
                     precio = item[3]
-                # Usamos parámetros nombrados para mayor claridad
 
                 cursor.execute(
                     """INSERT INTO detalle_factura 
@@ -751,13 +835,12 @@ class ReciboAppMejorado:
             return False 
         
         finally:
-            # Limpiar posibles resultados pendientes
             try:
                 while cursor.nextset():
                     pass
             except:
                 pass
-    
+
 if __name__ == "__main__":
     root = tk.Tk()
     user_data = {
