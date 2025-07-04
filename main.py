@@ -319,7 +319,7 @@ class ReciboAppMejorado:
                 self.result = None
                 self.dialog = tk.Toplevel(parent)
                 self.dialog.title("Autenticación de Administrador")
-                self.dialog.geometry("400x250")
+                self.dialog.geometry("400x300")
                 self.dialog.transient(parent)
                 self.dialog.grab_set()
                 
@@ -378,7 +378,7 @@ class ReciboAppMejorado:
                     messagebox.showerror("Error", "Por favor ingrese usuario y contraseña")
                     return
                 
-                auth_result = self.parent.auth_manager.authenticate(username, password)
+                auth_result = self.app_instance.auth_manager.authenticate(username, password)
 
                 if auth_result['success'] and auth_result['user_data']['rol'] == 'admin':
                     self.result = True
