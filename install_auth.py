@@ -69,9 +69,27 @@ def setup_database():
         
         # Crear índices
         print("Creando índices...")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_username ON usuarios_sistema(username)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_activo ON usuarios_sistema(activo)")
-        
+        # Crear índices solo si no existen
+        cursor.execute("""
+            SELECT COUNT(*) 
+            FROM information_schema.statistics 
+            WHERE table_schema = DATABASE()
+            AND table_name = 'usuarios_sistema'
+            AND index_name = 'idx_username'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("CREATE INDEX idx_username ON usuarios_sistema(username)")
+
+        cursor.execute("""
+            SELECT COUNT(*) 
+            FROM information_schema.statistics 
+            WHERE table_schema = DATABASE()
+            AND table_name = 'usuarios_sistema'
+            AND index_name = 'idx_activo'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("CREATE INDEX idx_activo ON usuarios_sistema(activo)")
+
         # Crear tabla log_accesos
         print("Creando tabla log_accesos...")
         cursor.execute("""

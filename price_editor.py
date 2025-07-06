@@ -119,6 +119,20 @@ class PriceEditorApp:
         
         # Create treeview with scrollbars
         self.create_products_table(table_frame)
+
+        # Bottom buttons frame (NEW - Added Save and Cancel buttons)
+        bottom_buttons_frame = tk.Frame(main_frame, bg="#f0f0f0")
+        bottom_buttons_frame.pack(fill="x", pady=(10, 0))
+        
+        tk.Button(bottom_buttons_frame,
+                 text="💾 Guardar Cambios",
+                 command=self.save_changes,
+                 bg="#27AE60", fg="white", padx=15, pady=5).pack(side="left", padx=5)
+        
+        tk.Button(bottom_buttons_frame,
+                 text="❌ Cancelar Cambios",
+                 command=self.cancel_changes,
+                 bg="#E74C3C", fg="white", padx=15, pady=5).pack(side="right", padx=5)
         
         # Bottom info frame
         info_bottom_frame = tk.Frame(main_frame, bg="#f0f0f0")
@@ -139,6 +153,31 @@ class PriceEditorApp:
                             font=("Arial", 9))
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
     
+    def save_changes(self):
+        """Guardar todos los cambios realizados"""
+        try:
+            self.conn.commit()
+            self.changes_made = False
+            messagebox.showinfo("Éxito", "Todos los cambios han sido guardados correctamente")
+            self.status_var.set("Cambios guardados correctamente")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudieron guardar los cambios: {str(e)}")
+            self.status_var.set("Error al guardar cambios")
+
+    def cancel_changes(self):
+        """Cancelar todos los cambios no guardados"""
+        if self.changes_made:
+            if messagebox.askyesno("Confirmar", "¿Está seguro que desea descartar todos los cambios no guardados?"):
+                try:
+                    self.conn.rollback()
+                    self.changes_made = False
+                    self.load_products()  # Recargar datos originales
+                    self.status_var.set("Cambios cancelados - Se recargaron los datos originales")
+                except Exception as e:
+                    messagebox.showerror("Error", f"No se pudieron cancelar los cambios: {str(e)}")
+        else:
+            messagebox.showinfo("Información", "No hay cambios pendientes por guardar")
+            
     def create_products_table(self, parent):
         """Crear tabla de productos con scrollbars"""
         # Frame for scrollbars

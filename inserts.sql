@@ -1,3 +1,5 @@
+USE disfruleg;
+
 -- Insertar grupos
 INSERT INTO grupo (clave_grupo, descuento) VALUES 
 ('Grupo1', 5.00),        -- id_grupo = 1 

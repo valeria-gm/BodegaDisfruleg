@@ -1,2 +1,6 @@
-pip install matplotlib
-pip install reportlab
+matplotlib
+reportlab
+fpdf
+mysql-connector-python
+Pillow
+bcrypt

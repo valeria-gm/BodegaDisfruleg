@@ -1,3 +1,5 @@
+USE disfruleg;
+
 -- Una vista funciona como una tabla virtual que puedes consultar como cualquier SELECT, pero no puedes modificar directamente.
 USE disfruleg;
 

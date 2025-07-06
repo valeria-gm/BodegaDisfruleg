@@ -24,9 +24,7 @@ def conectar():
             user='jared',
             password='zoibnG31!!EAEA',
             database='disfruleg',
-            auth_plugin='mysql_native_password',
-            charset="utf8mb4",  # <-- Añade esto
-        collation="utf8mb4_unicode_ci"
+            auth_plugin='mysql_native_password'
         )
         return conn
     except Error as e:

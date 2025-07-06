@@ -26,6 +26,14 @@ clientes = cursor.fetchall()
 if not os.path.exists("recibos"):
     os.makedirs("recibos")
 
+class PDF(FPDF):
+    def __init__(self):
+        super().__init__()
+        # Registrar fuentes Unicode (asegúrate de tener la carpeta 'fonts' en tu proyecto)
+        self.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf', uni=True)
+        self.add_font('DejaVu', 'B', 'fonts/DejaVuSans-Bold.ttf', uni=True)
+        self.set_font('DejaVu', '', 12)  # Fuente por defecto
+
 class ReciboAppMejorado:
     def __init__(self, root, user_data):
         self.auth_manager = AuthManager()
@@ -720,20 +728,25 @@ class ReciboAppMejorado:
         if not messagebox.askyesno("Confirmar", f"¿Generar recibo por ${total_general:.2f}?"):
             return
         
-        # Generar PDF
-        self.crear_pdf(
-            [(item['producto']['nombre_producto'], 
-            float(item['cantidad']), 
-            item['unidad'], 
-            float(item['precio_final']), 
-            float(item['subtotal'])) for item in productos_finales],
-            total_general
-        )
-        
         # Guardar en BD si está activado
         if self.guardar_en_bd.get():
             if self.guardar_factura(productos_finales):
                 messagebox.showinfo("Éxito", "Recibo guardado correctamente")
+        
+        # Generar PDF
+        try:
+            self.crear_pdf(
+                [(item['producto']['nombre_producto'], 
+                float(item['cantidad']), 
+                item['unidad'], 
+                float(item['precio_final']), 
+                float(item['subtotal'])) for item in productos_finales],
+                total_general
+            )
+        except Exception as e:
+            messagebox.showerror("Error PDF", f"No se pudo generar el PDF: {e}\n\nLa factura SÍ se guardó en la base de datos.")
+        
+        
         
         # Limpiar carrito después de generar
         if messagebox.askyesno("Limpiar Carrito", "¿Desea limpiar el carrito para un nuevo recibo?"):
@@ -745,20 +758,20 @@ class ReciboAppMejorado:
         fecha = datetime.now().strftime("%Y-%m-%d")
         nombre_archivo = f"recibos/recibo_{cliente.lower().replace(' ', '_')}_{fecha}_{datetime.now().strftime('%H%M%S')}.pdf"
 
-        pdf = FPDF()
+        pdf = PDF()
         pdf.add_page()
-        pdf.set_font("Arial", size=12)
+        pdf.set_font("DejaVu", size=12)
 
         # Encabezado
-        pdf.set_font("Arial", "B", 16)
+        pdf.set_font("DejaVu", "B", 16)
         pdf.cell(200, 10, txt="DISFRULEG", ln=True, align="C")
-        pdf.set_font("Arial", size=12)
+        pdf.set_font("DejaVu", size=12)
         pdf.cell(200, 10, txt=f"Recibo para: {cliente}", ln=True, align="C")
         pdf.cell(200, 10, txt=f"Fecha: {fecha}", ln=True, align="C")
         pdf.ln(10)
 
         # Tabla de productos
-        pdf.set_font("Arial", "B", 10)
+        pdf.set_font("DejaVu", "B", 10)
         pdf.cell(60, 10, "Producto", 1)
         pdf.cell(30, 10, "Cantidad", 1)
         pdf.cell(30, 10, "Unidad", 1)
@@ -766,7 +779,7 @@ class ReciboAppMejorado:
         pdf.cell(40, 10, "Subtotal", 1)
         pdf.ln()
 
-        pdf.set_font("Arial", size=10)
+        pdf.set_font("DejaVu", size=10)
         for nombre, cantidad, unidad, precio_unitario, total in productos_finales:
             # Limpiar caracteres especiales para PDF
             nombre_limpio = nombre.replace('🔒', '[ESPECIAL]').encode('latin1', 'replace').decode('latin1')
@@ -779,7 +792,7 @@ class ReciboAppMejorado:
 
         # Total
         pdf.ln(5)
-        pdf.set_font("Arial", "B", 12)
+        pdf.set_font("DejaVu", "B", 12)
         pdf.cell(150, 10, "TOTAL", 1)
         pdf.cell(40, 10, f"${total_general:.2f}", 1)
 

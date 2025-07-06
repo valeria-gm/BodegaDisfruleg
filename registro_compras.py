@@ -5,12 +5,18 @@ import mysql.connector
 from conexion import conectar
 from decimal import Decimal
 from datetime import datetime
+from auth_manager import AuthManager
 
 class ComprasApp:
-    def __init__(self, root):
+    def __init__(self, root, user_data):
         self.root = root
         self.root.title("Registro de Compras - Disfruleg")
         self.root.geometry("800x600")
+
+        # Datos del usuario autenticado
+        self.user_data = user_data
+        self.es_admin = (self.user_data['rol'] == 'admin')
+        self.auth_manager = AuthManager()
         
         # Connect to database
         self.conn = conectar()
@@ -28,7 +34,7 @@ class ComprasApp:
         
     def load_productos(self):
         """Cargar productos desde la base de datos"""
-        self.cursor.execute("SELECT id_producto, nombre_producto, unidad FROM producto ORDER BY nombre_producto")
+        self.cursor.execute("SELECT id_producto, nombre_producto, unidad_producto, es_especial FROM producto ORDER BY nombre_producto")
         self.productos = self.cursor.fetchall()
         
     def create_interface(self):
@@ -51,7 +57,8 @@ class ComprasApp:
         
         # Barra de estado
         self.status_var = tk.StringVar()
-        self.status_var.set("Listo")
+        self.status_var.set(f"Usuario: {self.user_data['nombre_completo']} | Rol: {self.user_data['rol']}")
+        #self.status_var.set("Listo")
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
     
@@ -67,7 +74,7 @@ class ComprasApp:
         
         # Producto
         tk.Label(row1, text="Producto:", width=15, anchor="w").pack(side="left")
-        productos_nombres = [f"{p['nombre_producto']} ({p['unidad']})" for p in self.productos]
+        productos_nombres = [f"{p['nombre_producto']} ({p['unidad_producto']})" for p in self.productos]
         self.producto_combo = ttk.Combobox(row1, textvariable=self.selected_product, 
                                          values=productos_nombres, state="readonly", width=30)
         self.producto_combo.pack(side="left", padx=5)
@@ -183,6 +190,70 @@ class ComprasApp:
         except:
             self.total_var.set("$0.00")
     
+    def verificar_password_admin(self):
+        """Verificar contraseña de administrador"""
+        popup = tk.Toplevel(self.root)
+        popup.title("Autenticación de Administrador")
+        popup.geometry("400x300")
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        # Centrar popup
+        popup.update_idletasks()
+        width = popup.winfo_width()
+        height = popup.winfo_height()
+        x = (popup.winfo_screenwidth() // 2) - (width // 2)
+        y = (popup.winfo_screenheight() // 2) - (height // 2)
+        popup.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+        
+        # Contenido
+        tk.Label(popup, text="🔒 Producto Especial", 
+                font=("Arial", 14, "bold"), fg="#f44336").pack(pady=(20, 10))
+        
+        tk.Label(popup, text="Este producto requiere permisos de administrador.\nIngrese las credenciales de un administrador:",
+                font=("Arial", 10), justify="center").pack(pady=(0, 20))
+        
+        # Campos de entrada
+        tk.Label(popup, text="Usuario:", font=("Arial", 11)).pack()
+        username_var = tk.StringVar()
+        tk.Entry(popup, textvariable=username_var, font=("Arial", 11)).pack(pady=(0, 10))
+        
+        tk.Label(popup, text="Contraseña:", font=("Arial", 11)).pack()
+        password_var = tk.StringVar()
+        tk.Entry(popup, textvariable=password_var, show="*", font=("Arial", 11)).pack(pady=(0, 20))
+        
+        # Variable para resultado
+        result = {'success': False}
+        
+        def verificar():
+            username = username_var.get().strip()
+            password = password_var.get().strip()
+            
+            if not username or not password:
+                messagebox.showerror("Error", "Por favor ingrese usuario y contraseña")
+                return
+            
+            auth_result = self.auth_manager.authenticate(username, password)
+            
+            if auth_result['success'] and auth_result['user_data']['rol'] == 'admin':
+                result['success'] = True
+                popup.destroy()
+            else:
+                messagebox.showerror("Error", auth_result.get('message', 'Credenciales inválidas'))
+                password_var.set("")
+        
+        # Botones
+        button_frame = tk.Frame(popup)
+        button_frame.pack(pady=10)
+        
+        tk.Button(button_frame, text="Verificar", command=verificar,
+                 bg="#4CAF50", fg="white", padx=15, pady=5).pack(side="left", padx=10)
+        tk.Button(button_frame, text="Cancelar", command=popup.destroy,
+                 bg="#f44336", fg="white", padx=15, pady=5).pack(side="left", padx=10)
+        
+        popup.wait_window()
+        return result['success']
+
     def registrar_compra(self):
         """Registrar una nueva compra"""
         # Validar campos
@@ -209,21 +280,36 @@ class ComprasApp:
         # Obtener ID del producto seleccionado
         producto_nombre = self.selected_product.get().split(" (")[0]  # Remover la unidad
         producto_id = None
+        producto_especial = False
+        
         for p in self.productos:
             if p['nombre_producto'] == producto_nombre:
                 producto_id = p['id_producto']
+                producto_especial = p.get('es_especial', False)
                 break
         
         if not producto_id:
             messagebox.showerror("Error", "No se pudo identificar el producto seleccionado")
             return
         
+        # Verificar si es producto especial y el usuario no es admin
+        if producto_especial and not self.es_admin:
+            if not self.verificar_password_admin():
+                return  # Usuario canceló o falló la autenticación
+        
         try:
             # Insertar en la base de datos
             self.cursor.execute("""
-                INSERT INTO compra (fecha, id_producto, cantidad, precio_unitario_compra)
+                INSERT INTO compra (fecha_compra, id_producto, cantidad_compra, precio_unitario_compra)
                 VALUES (%s, %s, %s, %s)
             """, (fecha, producto_id, cantidad, precio))
+            
+            # Actualizar stock del producto
+            self.cursor.execute("""
+                UPDATE producto 
+                SET stock = stock + %s 
+                WHERE id_producto = %s
+            """, (cantidad, producto_id))
             
             self.conn.commit()
             
@@ -253,12 +339,12 @@ class ComprasApp:
         
         # Obtener compras con detalles del producto
         self.cursor.execute("""
-            SELECT c.id_compra, c.fecha, p.nombre_producto, p.unidad, 
-                   c.cantidad, c.precio_unitario_compra,
-                   (c.cantidad * c.precio_unitario_compra) as total
+            SELECT c.id_compra, c.fecha_compra as fecha, p.nombre_producto, p.unidad_producto as unidad, 
+                   c.cantidad_compra as cantidad, c.precio_unitario_compra as precio_unitario_compra,
+                   (c.cantidad_compra * c.precio_unitario_compra) as total
             FROM compra c
             JOIN producto p ON c.id_producto = p.id_producto
-            ORDER BY c.fecha DESC, c.id_compra DESC
+            ORDER BY c.fecha_compra DESC, c.id_compra DESC
         """)
         
         compras = self.cursor.fetchall()
@@ -310,9 +396,9 @@ class ComprasApp:
         values = self.compras_tree.item(selected_item, "values")
         compra_id = values[0]
         
-        # Obtener datos completos de la base de datos
+         # Obtener datos completos de la base de datos
         self.cursor.execute("""
-            SELECT c.*, p.nombre_producto, p.unidad
+            SELECT c.*, p.nombre_producto, p.unidad_producto, p.es_especial
             FROM compra c
             JOIN producto p ON c.id_producto = p.id_producto
             WHERE c.id_compra = %s
@@ -323,6 +409,11 @@ class ComprasApp:
             messagebox.showerror("Error", "Compra no encontrada")
             return
         
+        # Verificar si es producto especial y el usuario no es admin
+        if compra.get('es_especial', False) and not self.es_admin:
+            if not self.verificar_password_admin():
+                return  # Usuario canceló o falló la autenticación
+
         # Crear ventana de edición
         self.create_edit_dialog(compra)
     
@@ -360,7 +451,7 @@ class ComprasApp:
         fecha_frame = tk.Frame(form_frame)
         fecha_frame.pack(fill="x", pady=5)
         tk.Label(fecha_frame, text="Fecha:", width=15, anchor="w").pack(side="left")
-        fecha_var = tk.StringVar(value=str(compra['fecha']))
+        fecha_var = tk.StringVar(value=str(compra['fecha_compra']))
         fecha_entry = tk.Entry(fecha_frame, textvariable=fecha_var, width=20)
         fecha_entry.pack(side="left", fill="x", expand=True)
         
@@ -368,7 +459,7 @@ class ComprasApp:
         cant_frame = tk.Frame(form_frame)
         cant_frame.pack(fill="x", pady=5)
         tk.Label(cant_frame, text="Cantidad:", width=15, anchor="w").pack(side="left")
-        cantidad_var = tk.DoubleVar(value=float(compra['cantidad']))
+        cantidad_var = tk.DoubleVar(value=float(compra['cantidad_compra']))
         cantidad_entry = tk.Entry(cant_frame, textvariable=cantidad_var, width=20)
         cantidad_entry.pack(side="left", fill="x", expand=True)
         
@@ -425,12 +516,33 @@ class ComprasApp:
             return
         
         try:
+            # Obtener cantidad anterior para ajustar stock
+            self.cursor.execute("""
+                SELECT cantidad_compra, id_producto 
+                FROM compra 
+                WHERE id_compra = %s
+            """, (compra_id,))
+            old_data = self.cursor.fetchone()
+            
+            if not old_data:
+                raise Exception("Compra no encontrada")
+            
+            diferencia_cantidad = cantidad - old_data['cantidad_compra']
+            
             # Actualizar en la base de datos
             self.cursor.execute("""
                 UPDATE compra 
-                SET fecha = %s, cantidad = %s, precio_unitario_compra = %s
+                SET fecha_compra = %s, cantidad_compra = %s, precio_unitario_compra = %s
                 WHERE id_compra = %s
             """, (fecha, cantidad, precio, compra_id))
+            
+            # Actualizar stock del producto
+            if diferencia_cantidad != 0:
+                self.cursor.execute("""
+                    UPDATE producto 
+                    SET stock = stock + %s 
+                    WHERE id_producto = %s
+                """, (diferencia_cantidad, old_data['id_producto']))
             
             self.conn.commit()
             
@@ -441,7 +553,7 @@ class ComprasApp:
         except Exception as e:
             self.conn.rollback()
             messagebox.showerror("Error", f"Error al actualizar compra: {str(e)}")
-    
+
     def eliminar_compra(self):
         """Eliminar compra seleccionada"""
         selected_item = self.compras_tree.focus()
@@ -463,8 +575,25 @@ class ComprasApp:
             return
         
         try:
-            # Eliminar de la base de datos
-            self.cursor.execute("DELETE FROM compra WHERE id_compra = %s", (compra_id,))
+            # Obtener datos para ajustar stock
+            self.cursor.execute("""
+                SELECT cantidad_compra, id_producto 
+                FROM compra 
+                WHERE id_compra = %s
+            """, (compra_id,))
+            compra_data = self.cursor.fetchone()
+            
+            if compra_data:
+                # Eliminar de la base de datos
+                self.cursor.execute("DELETE FROM compra WHERE id_compra = %s", (compra_id,))
+                
+                # Ajustar stock
+                self.cursor.execute("""
+                    UPDATE producto 
+                    SET stock = stock - %s 
+                    WHERE id_producto = %s
+                """, (compra_data['cantidad_compra'], compra_data['id_producto']))
+            
             self.conn.commit()
             
             messagebox.showinfo("Éxito", "Compra eliminada exitosamente")
@@ -473,7 +602,7 @@ class ComprasApp:
         except Exception as e:
             self.conn.rollback()
             messagebox.showerror("Error", f"Error al eliminar compra: {str(e)}")
-    
+
     def on_closing(self):
         """Cerrar aplicación"""
         try:
@@ -484,6 +613,10 @@ class ComprasApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = ComprasApp(root)
+    user_data = {
+        'nombre_completo': 'Usuario Prueba',
+        'rol': 'usuario'  # Cambiar a 'admin' para probar productos especiales
+    }
+    app = ComprasApp(root, user_data)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()
