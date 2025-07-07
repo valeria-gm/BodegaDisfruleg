@@ -444,7 +444,7 @@ class ComprasApp:
         prod_frame = tk.Frame(form_frame)
         prod_frame.pack(fill="x", pady=5)
         tk.Label(prod_frame, text="Producto:", width=15, anchor="w").pack(side="left")
-        tk.Label(prod_frame, text=f"{compra['nombre_producto']} ({compra['unidad']})", 
+        tk.Label(prod_frame, text=f"{compra['nombre_producto']} ({compra['unidad_producto']})", 
                 font=("Arial", 10, "bold")).pack(side="left")
         
         # Fecha
