@@ -39,6 +39,7 @@ class ReciboAppMejorado:
         self.search_var = tk.StringVar()
         self.guardar_en_bd = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar()
+        self.sectioning_var = None  # Will be set when section selection is created
         
         # Data containers
         self.clientes: List[ClientData] = []
@@ -50,6 +51,8 @@ class ReciboAppMejorado:
         self.productos_tree = None
         self.carrito_tree = None
         self.total_var = None
+        self.section_selection_frame = None
+        self.section_management_button = None
         
         # Initialize application
         self._load_data()
@@ -61,7 +64,7 @@ class ReciboAppMejorado:
         try:
             self.clientes = self.db_manager.get_clients()
             productos = self.db_manager.get_products()
-            self.product_manager = ProductManager(productos)
+            self.product_manager = ProductManager(productos, db_manager=self.db_manager)
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar datos: {str(e)}")
     
@@ -72,6 +75,7 @@ class ReciboAppMejorado:
         
         # Create sections
         self._create_client_section(main_frame)
+        self._create_section_selection(main_frame)
         self._create_products_section(main_frame)
         self._create_cart_section(main_frame)
         self._create_actions_section(main_frame)
@@ -84,6 +88,14 @@ class ReciboAppMejorado:
             parent, client_names, self.cliente_seleccionado,
             self.on_client_change, self.guardar_en_bd
         )
+    
+    def _create_section_selection(self, parent):
+        """Create section selection section"""
+        self.section_selection_frame = self.ui_builder.create_section_selection(
+            parent, self.on_sectioning_toggle, self.on_manage_sections
+        )
+        # Connect sectioning_var to the frame's variable
+        self.sectioning_var = self.section_selection_frame.sectioning_var
     
     def _create_products_section(self, parent):
         """Create products section"""
@@ -140,6 +152,9 @@ class ReciboAppMejorado:
             self.cart_manager.clear_cart()
             self._update_cart_display()
             
+            # Enable section selection UI
+            self._enable_section_selection()
+            
             # Update status
             self.status_var.set(
                 f"Cliente: {cliente_nombre} | "
@@ -186,12 +201,18 @@ class ReciboAppMejorado:
                     return
                 messagebox.showinfo("Autorizado", "Acceso autorizado. Puede agregar el producto especial.")
             
-            # Check if already in cart
+            # Check if already in cart (behavior depends on sectioning)
             if self.cart_manager.is_in_cart(product_id):
-                if messagebox.askyesno("Producto en carrito", 
-                                     "Este producto ya está en el carrito. ¿Desea editar la cantidad?"):
-                    self._edit_cart_quantity(product_id)
-                return
+                if not self.cart_manager.sectioning_enabled:
+                    # Without sectioning, edit existing quantity
+                    if messagebox.askyesno("Producto en carrito", 
+                                         "Este producto ya está en el carrito. ¿Desea editar la cantidad?"):
+                        self._edit_cart_quantity(product_id)
+                    return
+                else:
+                    # With sectioning, allow adding to different sections
+                    # The dialog will handle section selection
+                    pass
             
             # Show add to cart dialog
             self._show_add_to_cart_dialog(product)
@@ -206,8 +227,8 @@ class ReciboAppMejorado:
             return
         
         try:
-            product_id = int(self.carrito_tree.item(item_seleccionado, "tags")[0])
-            self._edit_cart_quantity(product_id)
+            cart_key = self.carrito_tree.item(item_seleccionado, "tags")[0]
+            self._edit_cart_quantity(cart_key)
         except (ValueError, IndexError):
             messagebox.showerror("Error", "Error al obtener información del producto")
     
@@ -219,13 +240,13 @@ class ReciboAppMejorado:
             return
         
         try:
-            product_id = int(self.carrito_tree.item(item_seleccionado, "tags")[0])
+            cart_key = self.carrito_tree.item(item_seleccionado, "tags")[0]
             cart_items = self.cart_manager.get_cart_items()
             
-            if product_id in cart_items:
-                product_name = cart_items[product_id].producto.nombre_producto
+            if cart_key in cart_items:
+                product_name = cart_items[cart_key].producto.nombre_producto
                 if messagebox.askyesno("Confirmar", f"¿Eliminar {product_name} del carrito?"):
-                    self.cart_manager.remove_item(product_id)
+                    self.cart_manager.remove_item(cart_key)
                     self._update_cart_display()
                     self._update_products_display()
         except (ValueError, IndexError):
@@ -237,18 +258,59 @@ class ReciboAppMejorado:
             self._update_cart_display()
             self._update_products_display()
     
+    def on_sectioning_toggle(self):
+        """Handle sectioning toggle"""
+        enabled = self.sectioning_var.get()
+        self.cart_manager.enable_sectioning(enabled)
+        
+        # Show/hide section management button
+        if enabled:
+            self.ui_builder.show_section_management_button(self.section_selection_frame)
+        else:
+            self.ui_builder.hide_section_management_button(self.section_selection_frame)
+        
+        self._update_cart_display()
+    
+    def on_manage_sections(self):
+        """Handle section management button"""
+        if not self.cart_manager.sectioning_enabled:
+            messagebox.showwarning("Advertencia", "Las secciones no están habilitadas")
+            return
+        
+        def get_updated_sections():
+            return self.cart_manager.get_sections()
+        
+        self.ui_builder.create_section_management_dialog(
+            self.root, get_updated_sections,
+            self.cart_manager.add_section,
+            self.cart_manager.remove_section,
+            self.cart_manager.rename_section,
+            self._refresh_section_management
+        )
+    
+    def _enable_section_selection(self):
+        """Enable section selection UI after client is selected"""
+        self.ui_builder.enable_section_controls(self.section_selection_frame)
+    
+    def _refresh_section_management(self):
+        """Refresh section management after changes"""
+        # This method can be used to refresh UI elements when sections change
+        # For now, it's not needed as the dialog updates automatically
+        pass
+    
     # Helper methods
     def _show_add_to_cart_dialog(self, product: ProductData):
         """Show dialog to add product to cart"""
         price_info = self.product_manager.get_price_info(product)
         
-        def on_add_callback(product, cantidad, price_info):
+        def on_add_callback(product, cantidad, price_info, section_id=None):
             """Callback when product is added to cart"""
             success = self.cart_manager.add_item(
                 product, cantidad,
                 float(price_info['precio_base']),
                 float(price_info['precio_final']),
-                float(price_info['monto_descuento'])
+                float(price_info['monto_descuento']),
+                section_id
             )
             
             if success:
@@ -256,15 +318,17 @@ class ReciboAppMejorado:
                 self._update_products_display()
         
         # Create dialog
-        CartDialog(self.root, product, price_info, on_add_callback)
+        CartDialog(self.root, product, price_info, on_add_callback,
+                  self.cart_manager.get_sections(),
+                  self.cart_manager.sectioning_enabled)
     
-    def _edit_cart_quantity(self, product_id: int):
+    def _edit_cart_quantity(self, cart_key: str):
         """Edit quantity of product in cart"""
         cart_items = self.cart_manager.get_cart_items()
-        if product_id not in cart_items:
+        if cart_key not in cart_items:
             return
         
-        item = cart_items[product_id]
+        item = cart_items[cart_key]
         nueva_cantidad = simpledialog.askfloat(
             "Editar Cantidad",
             f"Nueva cantidad para {item.producto.nombre_producto}:",
@@ -273,7 +337,7 @@ class ReciboAppMejorado:
         )
         
         if nueva_cantidad:
-            if self.cart_manager.update_quantity(product_id, Decimal(str(nueva_cantidad))):
+            if self.cart_manager.update_quantity(cart_key, Decimal(str(nueva_cantidad))):
                 self._update_cart_display()
     
     def _update_products_display(self, products: List[ProductData] = None):
@@ -294,8 +358,14 @@ class ReciboAppMejorado:
     
     def _update_cart_display(self):
         """Update cart display"""
-        display_data = self.cart_manager.get_cart_display_data()
-        self.ui_builder.populate_treeview(self.carrito_tree, display_data, 'id')
+        if self.cart_manager.sectioning_enabled:
+            # Use sectioned display
+            sectioned_data = self.cart_manager.get_sectioned_cart_data()
+            self.ui_builder.populate_sectioned_treeview(self.carrito_tree, sectioned_data, 'id')
+        else:
+            # Use regular display
+            display_data = self.cart_manager.get_cart_display_data()
+            self.ui_builder.populate_treeview(self.carrito_tree, display_data, 'id')
         
         # Update total
         total = self.cart_manager.get_cart_total()
@@ -320,14 +390,35 @@ class ReciboAppMejorado:
         content += f"Fecha: {datetime.now().strftime('%Y-%m-%d')}\n"
         content += "="*50 + "\n"
         
-        cart_items = self.cart_manager.get_cart_items()
-        for item in cart_items.values():
-            nombre_producto = item.producto.nombre_producto
-            if item.producto.es_especial:
-                nombre_producto = f"🔒 {nombre_producto} (ESPECIAL)"
-            
-            content += f"{nombre_producto}\n"
-            content += f"  {float(item.cantidad):.2f} {item.producto.unidad_producto} x ${item.precio_final:.2f} = ${float(item.subtotal):.2f}\n\n"
+        if self.cart_manager.sectioning_enabled:
+            # Sectioned preview
+            sectioned_data = self.cart_manager.get_sectioned_cart_data()
+            for section_id, section_data in sectioned_data.items():
+                if section_id != "default":
+                    content += f"\n═══ {section_data['name']} ═══\n"
+                    
+                    for item_data in section_data['items']:
+                        nombre_producto = item_data['nombre']
+                        cantidad = item_data['cantidad']
+                        unidad = item_data['unidad']
+                        precio_final = item_data['precio_final']
+                        subtotal = item_data['subtotal']
+                        
+                        content += f"{nombre_producto}\n"
+                        content += f"  {cantidad} {unidad} x {precio_final} = {subtotal}\n\n"
+                    
+                    content += f"Subtotal {section_data['name']}: ${section_data['subtotal']:.2f}\n"
+                    content += "-"*30 + "\n"
+        else:
+            # Regular preview
+            cart_items = self.cart_manager.get_cart_items()
+            for item in cart_items.values():
+                nombre_producto = item.producto.nombre_producto
+                if item.producto.es_especial:
+                    nombre_producto = f"🔒 {nombre_producto} (ESPECIAL)"
+                
+                content += f"{nombre_producto}\n"
+                content += f"  {float(item.cantidad):.2f} {item.producto.unidad_producto} x ${item.precio_final:.2f} = ${float(item.subtotal):.2f}\n\n"
         
         content += "="*50 + "\n"
         content += f"TOTAL: ${float(self.cart_manager.get_cart_total()):.2f}"
@@ -354,7 +445,12 @@ class ReciboAppMejorado:
         if self.guardar_en_bd.get():
             try:
                 products_data = self.cart_manager.get_products_for_invoice()
-                invoice_id = self.db_manager.save_invoice(self.current_client.id_cliente, products_data)
+                sections_data = self.cart_manager.get_sections_for_invoice()
+                invoice_id = self.db_manager.save_invoice(
+                    self.current_client.id_cliente, 
+                    products_data, 
+                    sections_data
+                )
                 if invoice_id:
                     messagebox.showinfo("Éxito", f"Recibo guardado correctamente (ID: {invoice_id})")
                     self.status_var.set(f"Factura #{invoice_id} guardada en base de datos")
@@ -363,23 +459,33 @@ class ReciboAppMejorado:
         
         # Generate PDF
         try:
-            cart_items = self.cart_manager.get_cart_items()
-            productos_finales = []
-            
-            for item in cart_items.values():
-                productos_finales.append((
-                    item.producto.nombre_producto,
-                    float(item.cantidad),
-                    item.producto.unidad_producto,
-                    item.precio_final,
-                    float(item.subtotal)
-                ))
-            
-            filename = self.pdf_generator.create_pdf_from_products(
-                self.current_client.nombre_cliente,
-                productos_finales,
-                total
-            )
+            if self.cart_manager.sectioning_enabled:
+                # Generate sectioned PDF
+                sectioned_data = self.cart_manager.get_sectioned_cart_data()
+                filename = self.pdf_generator.generate_sectioned_pdf(
+                    self.current_client.nombre_cliente,
+                    sectioned_data,
+                    total
+                )
+            else:
+                # Generate regular PDF
+                cart_items = self.cart_manager.get_cart_items()
+                productos_finales = []
+                
+                for item in cart_items.values():
+                    productos_finales.append((
+                        item.producto.nombre_producto,
+                        float(item.cantidad),
+                        item.producto.unidad_producto,
+                        item.precio_final,
+                        float(item.subtotal)
+                    ))
+                
+                filename = self.pdf_generator.create_pdf_from_products(
+                    self.current_client.nombre_cliente,
+                    productos_finales,
+                    total
+                )
             
             messagebox.showinfo("Éxito", f"Recibo guardado en {filename}")
             

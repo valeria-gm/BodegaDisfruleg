@@ -1,8 +1,8 @@
 import os
 from fpdf import FPDF
 from datetime import datetime
-from typing import List, Tuple
-from ..models.receipt_models import ReceiptData
+from typing import List, Tuple, Dict
+from ..models.receipt_models import ReceiptData, InvoiceSection
 
 class PDF(FPDF):
     def __init__(self):
@@ -143,3 +143,92 @@ class PDFGenerator:
         pdf.set_font("DejaVu", "B", 12)
         pdf.cell(150, 10, "TOTAL", 1)
         pdf.cell(40, 10, f"${total:.2f}", 1)
+    
+    def generate_sectioned_pdf(self, cliente_name: str, sectioned_data: Dict, total_general: float) -> str:
+        """Generate PDF with sections"""
+        filename = self._generate_filename(cliente_name)
+        
+        pdf = PDF()
+        pdf.add_page()
+        pdf.set_font("DejaVu", size=12)
+
+        # Header
+        pdf.set_font("DejaVu", "B", 16)
+        pdf.cell(200, 10, txt="DISFRULEG", ln=True, align="C")
+        pdf.set_font("DejaVu", size=12)
+        pdf.cell(200, 10, txt=f"Recibo para: {cliente_name}", ln=True, align="C")
+        pdf.cell(200, 10, txt=f"Fecha: {datetime.now().strftime('%Y-%m-%d')}", ln=True, align="C")
+        pdf.ln(10)
+
+        # Generate sections
+        for section_id, section_data in sectioned_data.items():
+            if section_id == "default":
+                # Non-sectioned mode
+                self._add_products_table_from_data(pdf, section_data)
+            else:
+                # Sectioned mode
+                self._add_section_to_pdf(pdf, section_data)
+        
+        # Grand total
+        pdf.ln(5)
+        pdf.set_font("DejaVu", "B", 14)
+        pdf.cell(150, 10, "TOTAL GENERAL", 1)
+        pdf.cell(40, 10, f"${total_general:.2f}", 1)
+
+        pdf.output(filename)
+        return filename
+    
+    def _add_section_to_pdf(self, pdf: PDF, section_data: Dict):
+        """Add a section to the PDF"""
+        section_name = section_data['name']
+        section_items = section_data['items']
+        section_subtotal = section_data['subtotal']
+        
+        # Section header
+        pdf.ln(5)
+        pdf.set_font("DejaVu", "B", 12)
+        pdf.cell(200, 10, f"═══ {section_name} ═══", ln=True, align="C")
+        pdf.ln(2)
+        
+        # Products table for this section
+        if section_items:
+            self._add_products_table_from_data(pdf, section_items)
+            
+            # Section subtotal
+            pdf.ln(3)
+            pdf.set_font("DejaVu", "B", 11)
+            pdf.cell(150, 8, f"Subtotal {section_name}", 1)
+            pdf.cell(40, 8, f"${section_subtotal:.2f}", 1)
+            pdf.ln(8)
+    
+    def _add_products_table_from_data(self, pdf: PDF, items_data: List[Dict]):
+        """Add products table from display data"""
+        if not items_data:
+            return
+            
+        # Table header
+        pdf.set_font("DejaVu", "B", 10)
+        pdf.cell(60, 10, "Producto", 1)
+        pdf.cell(30, 10, "Cantidad", 1)
+        pdf.cell(30, 10, "Unidad", 1)
+        pdf.cell(30, 10, "Precio/Unidad", 1)
+        pdf.cell(40, 10, "Subtotal", 1)
+        pdf.ln()
+        
+        # Table rows
+        pdf.set_font("DejaVu", size=10)
+        for item_data in items_data:
+            nombre = item_data['producto']  # Changed from 'nombre' to 'producto'
+            cantidad = item_data['cantidad']
+            unidad = item_data['unidad']
+            precio_final = item_data['precio_final']
+            subtotal = item_data['subtotal']
+            
+            # Clean special characters for PDF
+            nombre_limpio = nombre.replace('🔒', '[ESPECIAL]').encode('latin1', 'replace').decode('latin1')
+            pdf.cell(60, 10, nombre_limpio, 1)
+            pdf.cell(30, 10, f"{cantidad}", 1)
+            pdf.cell(30, 10, f"{unidad}", 1)
+            pdf.cell(30, 10, f"{precio_final}", 1)
+            pdf.cell(40, 10, f"{subtotal}", 1)
+            pdf.ln()
