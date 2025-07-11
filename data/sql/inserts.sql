@@ -2,15 +2,19 @@ USE disfruleg;
 
 -- Insertar tipos de cliente
 INSERT INTO tipo_cliente (nombre_tipo, descripcion) VALUES
-('Minorista', 'Clientes que compran pequeñas cantidades'),
-('Mayorista', 'Clientes con compras al por mayor'),
-('Distribuidor', 'Clientes con descuentos especiales por volumen');
+('Tipo1', 'Clientes que compran pequeñas cantidades'),
+('Tipo2', 'Clientes con compras al por mayor'),
+('Tipo3', NULL);
 
 -- Insertar grupos
 INSERT INTO grupo (clave_grupo, descuento) VALUES 
-('Grupo1', 5.00),        -- id_grupo = 1 
-('Grupo2', 10.00),       -- id_grupo = 2 
-('Grupo3', 20.00);       -- id_grupo = 3 
+('Aeropuerto', 5.00),    
+('Mrl', 10.00),          
+('Salerosa', 20.00),     
+('Bocanegra', 15.00),
+('General', 0.00),
+('3M', 12.00),
+('Especial', 25.00);
 
 -- Insertar productos (sin precio_base)
 INSERT INTO producto (nombre_producto, unidad_producto, stock, es_especial) VALUES
