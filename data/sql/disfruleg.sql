@@ -2,11 +2,18 @@
 CREATE DATABASE IF NOT EXISTS disfruleg;
 USE disfruleg;
 
--- Tabla GRUPO
+-- Tabla GRUPO (para descuentos)
 CREATE TABLE grupo (
     id_grupo INT AUTO_INCREMENT PRIMARY KEY,
     clave_grupo VARCHAR(50) NOT NULL UNIQUE,
     descuento DECIMAL(5,2) NOT NULL DEFAULT 0.00 -- porcentaje (ej. 10.00 = 10%)
+);
+
+-- Tabla TIPO_CLIENTE (define categorías de clientes)
+CREATE TABLE tipo_cliente (
+    id_tipo_cliente INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_tipo VARCHAR(100) NOT NULL UNIQUE,
+    descripcion VARCHAR(255) -- Opcional
 );
 
 -- Tabla CLIENTE
@@ -15,18 +22,31 @@ CREATE TABLE cliente (
     nombre_cliente VARCHAR(100) NOT NULL,
     telefono VARCHAR(20),
     correo VARCHAR(100),
-    id_grupo INT,
-    FOREIGN KEY (id_grupo) REFERENCES grupo(id_grupo)
+    id_grupo INT, -- Opcional (para descuentos)
+    id_tipo_cliente INT NOT NULL, -- Obligatorio
+    FOREIGN KEY (id_grupo) REFERENCES grupo(id_grupo),
+    FOREIGN KEY (id_tipo_cliente) REFERENCES tipo_cliente(id_tipo_cliente)
 );
 
--- Tabla PRODUCTO
+-- Tabla PRODUCTO (sin precio_base)
 CREATE TABLE producto (
     id_producto INT AUTO_INCREMENT PRIMARY KEY,
     nombre_producto VARCHAR(250) NOT NULL,
     unidad_producto VARCHAR(50) NOT NULL,
     stock DECIMAL(10,2) NOT NULL,
-    es_especial BOOLEAN DEFAULT FALSE,
-    precio_base DECIMAL(10,2) NOT NULL 
+    es_especial BOOLEAN DEFAULT FALSE
+);
+
+-- Tabla PRECIO_POR_TIPO (precios específicos por tipo de cliente)
+CREATE TABLE precio_por_tipo (
+    id_precio_tipo INT AUTO_INCREMENT PRIMARY KEY,
+    id_tipo_cliente INT NOT NULL,
+    id_producto INT NOT NULL,
+    precio DECIMAL(10,2) NOT NULL,
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_tipo_cliente) REFERENCES tipo_cliente(id_tipo_cliente),
+    FOREIGN KEY (id_producto) REFERENCES producto(id_producto),
+    UNIQUE KEY (id_tipo_cliente, id_producto) -- Cada combinación tipo-producto es única; no puede existir más de un precio para la misma combinación
 );
 
 -- Tabla FACTURA
@@ -37,13 +57,13 @@ CREATE TABLE factura (
     FOREIGN KEY (id_cliente) REFERENCES cliente(id_cliente)
 );
 
--- Tabla DETALLE_FACTURA (sin subtotal generado)
+-- Tabla DETALLE_FACTURA
 CREATE TABLE detalle_factura (
     id_detalle INT AUTO_INCREMENT PRIMARY KEY,
     id_factura INT NOT NULL,
     id_producto INT NOT NULL,
     cantidad_factura DECIMAL(10,2) NOT NULL,
-    precio_unitario_venta DECIMAL(10,2) NOT NULL,
+    precio_unitario_venta DECIMAL(10,2) NOT NULL, 
     FOREIGN KEY (id_factura) REFERENCES factura(id_factura),
     FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
 );
@@ -58,7 +78,20 @@ CREATE TABLE compra (
     FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
 );
 
--- Crear tabla de usuarios
+-- Tabla de deudas
+CREATE TABLE deuda (
+    id_deuda INT AUTO_INCREMENT PRIMARY KEY,
+    id_cliente INT NOT NULL,
+    id_factura INT NOT NULL UNIQUE, -- Una factura solo genera una deuda
+    monto DECIMAL(10,2) NOT NULL,
+    fecha_generada DATE NOT NULL,
+    pagado BOOLEAN DEFAULT FALSE,
+    fecha_pago DATE NULL,
+    FOREIGN KEY (id_cliente) REFERENCES cliente(id_cliente),
+    FOREIGN KEY (id_factura) REFERENCES factura(id_factura)
+);
+
+-- Tabla de usuarios
 CREATE TABLE usuarios_sistema (
     id_usuario INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
@@ -72,7 +105,7 @@ CREATE TABLE usuarios_sistema (
     bloqueado_hasta TIMESTAMP NULL
 );
 
--- Crear tabla de logs
+-- Tabla de logs
 CREATE TABLE log_accesos (
     id_log INT AUTO_INCREMENT PRIMARY KEY,
     id_usuario INT NULL,
@@ -84,6 +117,6 @@ CREATE TABLE log_accesos (
     FOREIGN KEY (id_usuario) REFERENCES usuarios_sistema(id_usuario) ON DELETE SET NULL
 );
 
--- Crear índices
+-- Índices
 CREATE INDEX idx_username ON usuarios_sistema(username);
 CREATE INDEX idx_activo ON usuarios_sistema(activo);
