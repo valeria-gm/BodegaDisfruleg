@@ -100,7 +100,31 @@ INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
 
 -- Insertar clientes
 INSERT INTO cliente (nombre_cliente, telefono, correo, id_grupo, id_tipo_cliente) VALUES
-('Restaurante 1', '5551234567', 'ana.perez@example.com', 1, 1),  
-('Restaurante 2', '5559876543', 'luis.gomez@example.com', 3, 2), 
-('Restaurante 3', '5551112222', NULL, 2, 2),                   
-('Restaurante 4', '5552223333', 'carlos.m@example.com', 5, 2); 
+-- Grupo Aeropuerto (id_grupo = 1)
+('Sabores del Alma', '5551111111', 'contacto@saboresdelalma.com', 1, 1),
+('La Mesa Secreta', '5551111112', 'reservas@lamesasecreta.com', 1, 2),
+
+-- Grupo Mrl (id_grupo = 2)
+('Fuego & Brasa', '5552222221', 'info@fuegoybrasa.com', 2, 2),
+('El Jardín de los Platos', '5552222222', 'contacto@jardinplatos.com', 2, 2),
+
+-- Grupo Salerosa (id_grupo = 3)
+('Tinto & Trufa', '5553333331', 'reservas@tintoytrufa.com', 3, 2),
+('Sazón Nómada', '5553333332', 'hola@sazonnomada.com', 3, 2),
+
+-- Grupo Bocanegra (id_grupo = 4)
+('Cuchara Urbana', '5554444441', 'info@cucharaurbana.com', 4, 2),
+('Lumbre Cocina Viva', '5554444442', 'lumbre@cocinaviva.com', 4, 2),
+
+-- Grupo General (id_grupo = 5)
+('Casa Mar & Tierra', '5555555551', 'contact@casamartierra.com', 5, 2),
+('Origen Ancestral', '5555555552', 'hola@origenancestral.com', 5, 2),
+
+-- Grupo 3M (id_grupo = 6)
+('Albahaca y Olivo', '5556666661', 'info@albahacayolivo.com', 6, 2),
+('Brío Bistró', '5556666662', 'reservas@briobistro.com', 6, 2),
+
+-- Grupo Especial (id_grupo = 7)
+('Manjar Moderno', '5557777771', 'contacto@manjarmoderno.com', 7, 2),
+('Sabor Sagrado', '5557777772', 'info@saborsagrado.com', 7, 2),
+('Bocado Oculto', '5557777773', 'reservas@bocadooculto.com', 7, 2);
