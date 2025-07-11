@@ -35,6 +35,7 @@ class ReciboAppMejorado:
         self.cart_manager = CartManager()
         
         # Initialize variables
+        self.grupo_seleccionado = tk.StringVar()
         self.cliente_seleccionado = tk.StringVar()
         self.search_var = tk.StringVar()
         self.guardar_en_bd = tk.BooleanVar(value=True)
@@ -42,11 +43,14 @@ class ReciboAppMejorado:
         self.sectioning_var = None  # Will be set when section selection is created
         
         # Data containers
+        self.grupos: List[Dict[str, Any]] = []
         self.clientes: List[ClientData] = []
+        self.current_group: Optional[Dict[str, Any]] = None
         self.current_client: Optional[ClientData] = None
         self.product_manager: Optional[ProductManager] = None
         
         # UI components
+        self.grupo_combo = None
         self.cliente_combo = None
         self.productos_tree = None
         self.carrito_tree = None
@@ -62,7 +66,8 @@ class ReciboAppMejorado:
     def _load_data(self):
         """Load initial data from database"""
         try:
-            self.clientes = self.db_manager.get_clients()
+            self.grupos = self.db_manager.get_groups()
+            # Don't load clients initially - they'll be loaded when group is selected
             productos = self.db_manager.get_products()
             self.product_manager = ProductManager(productos, db_manager=self.db_manager)
         except Exception as e:
@@ -74,6 +79,7 @@ class ReciboAppMejorado:
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Create sections
+        self._create_group_section(main_frame)
         self._create_client_section(main_frame)
         self._create_section_selection(main_frame)
         self._create_products_section(main_frame)
@@ -81,12 +87,19 @@ class ReciboAppMejorado:
         self._create_actions_section(main_frame)
         self._create_status_bar()
     
+    def _create_group_section(self, parent):
+        """Create group selection section"""
+        group_names = [grupo['clave_grupo'] for grupo in self.grupos]
+        self.grupo_combo = self.ui_builder.create_group_selection(
+            parent, group_names, self.grupo_seleccionado,
+            self.on_group_change, self.guardar_en_bd
+        )
+    
     def _create_client_section(self, parent):
         """Create client selection section"""
-        client_names = [cliente.nombre_cliente for cliente in self.clientes]
+        # Start with empty client list - will be populated when group is selected
         self.cliente_combo = self.ui_builder.create_client_section(
-            parent, client_names, self.cliente_seleccionado,
-            self.on_client_change, self.guardar_en_bd
+            parent, [], self.cliente_seleccionado, self.on_client_change
         )
     
     def _create_section_selection(self, parent):
@@ -126,13 +139,71 @@ class ReciboAppMejorado:
         self.status_var.set(
             f"Usuario: {self.user_data['nombre_completo']} | "
             f"Rol: {self.user_data['rol']} | "
-            f"Seleccione un cliente"
+            f"Seleccione un grupo"
         )
     
     # Event handlers
+    def on_group_change(self, event=None):
+        """Handle group selection change"""
+        grupo_nombre = self.grupo_seleccionado.get()
+        
+        # Find selected group
+        self.current_group = None
+        for grupo in self.grupos:
+            if grupo['clave_grupo'] == grupo_nombre:
+                self.current_group = grupo
+                break
+        
+        if self.current_group:
+            try:
+                # Load clients for this group
+                self.clientes = self.db_manager.get_clients_by_group(self.current_group['id_grupo'])
+                
+                # Update client combo with filtered clients
+                client_names = []
+                for cliente in self.clientes:
+                    client_type = self.db_manager.get_client_type_name(cliente.id_tipo_cliente)
+                    display_name = f"{cliente.nombre_cliente} ({client_type})"
+                    client_names.append(display_name)
+                
+                self.ui_builder.populate_combobox(self.cliente_combo, client_names)
+                self.ui_builder.enable_client_selection(self.cliente_combo)
+                
+                # Clear current client and reset UI
+                self.current_client = None
+                self.cliente_seleccionado.set("")
+                self.cart_manager.clear_cart()
+                self._update_cart_display()
+                self._clear_products_display()
+                
+                # Update status
+                self.status_var.set(
+                    f"Grupo: {grupo_nombre} | "
+                    f"{len(self.clientes)} clientes disponibles | "
+                    f"Seleccione un cliente"
+                )
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al cargar clientes: {str(e)}")
+        else:
+            # Clear everything when no group is selected
+            self.clientes = []
+            self.current_client = None
+            self.ui_builder.populate_combobox(self.cliente_combo, [])
+            self.ui_builder.disable_client_selection(self.cliente_combo)
+            self.cart_manager.clear_cart()
+            self._update_cart_display()
+            self._clear_products_display()
+    
     def on_client_change(self, event=None):
         """Handle client selection change"""
-        cliente_nombre = self.cliente_seleccionado.get()
+        cliente_display = self.cliente_seleccionado.get()
+        
+        # Extract client name from display (remove type info)
+        if ' (' in cliente_display:
+            cliente_nombre = cliente_display.split(' (')[0]
+        else:
+            cliente_nombre = cliente_display
         
         # Find selected client
         self.current_client = None
@@ -155,8 +226,15 @@ class ReciboAppMejorado:
             # Enable section selection UI
             self._enable_section_selection()
             
+            # Update client type display
+            client_type = self.db_manager.get_client_type_name(self.current_client.id_tipo_cliente)
+            self.ui_builder.update_client_type_display(
+                self.cliente_combo, client_type, float(self.current_client.descuento)
+            )
+            
             # Update status
             self.status_var.set(
+                f"Grupo: {self.current_group['clave_grupo']} | "
                 f"Cliente: {cliente_nombre} | "
                 f"Descuento: {float(self.current_client.descuento)}% | "
                 f"{len(self.product_manager.all_products)} productos"
@@ -177,6 +255,10 @@ class ReciboAppMejorado:
     
     def on_product_double_click(self, event):
         """Handle product double click"""
+        if not self.current_group:
+            messagebox.showerror("Error", "Debe seleccionar un grupo primero")
+            return
+        
         if not self.current_client:
             messagebox.showerror("Error", "Debe seleccionar un cliente primero")
             return
@@ -356,6 +438,10 @@ class ReciboAppMejorado:
         
         self.ui_builder.populate_treeview(self.productos_tree, display_data, 'id_producto')
     
+    def _clear_products_display(self):
+        """Clear products display"""
+        self.ui_builder.populate_treeview(self.productos_tree, [], 'id_producto')
+    
     def _update_cart_display(self):
         """Update cart display"""
         if self.cart_manager.sectioning_enabled:
@@ -377,6 +463,10 @@ class ReciboAppMejorado:
     
     def show_preview(self):
         """Show receipt preview"""
+        if not self.current_group:
+            messagebox.showerror("Error", "Debe seleccionar un grupo")
+            return
+        
         if not self.current_client:
             messagebox.showerror("Error", "Debe seleccionar un cliente")
             return
@@ -428,6 +518,10 @@ class ReciboAppMejorado:
     
     def generate_receipt(self):
         """Generate final receipt"""
+        if not self.current_group:
+            messagebox.showerror("Error", "Debe seleccionar un grupo")
+            return
+        
         if not self.current_client:
             messagebox.showerror("Error", "Debe seleccionar un cliente")
             return

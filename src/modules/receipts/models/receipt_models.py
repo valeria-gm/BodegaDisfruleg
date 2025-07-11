@@ -16,9 +16,16 @@ class ClientData:
     """Data model for client information"""
     id_cliente: int
     nombre_cliente: str
-    id_grupo: Optional[int]
+    id_grupo: int  # Now mandatory - all clients must have a group
+    id_tipo_cliente: int  # Now mandatory - all clients must have a type
     descuento: Decimal = Decimal('0')
-    id_tipo_cliente: Optional[int] = None
+    
+    def __post_init__(self):
+        """Validate that all required fields are present"""
+        if self.id_tipo_cliente is None:
+            raise ValueError(f"Client {self.nombre_cliente} must have a type assigned")
+        if self.id_grupo is None:
+            raise ValueError(f"Client {self.nombre_cliente} must have a group assigned")
 
 @dataclass
 class CartItem:

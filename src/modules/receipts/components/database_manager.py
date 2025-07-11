@@ -13,22 +13,28 @@ class DatabaseManager:
         self.cursor = self.conn.cursor(dictionary=True)
     
     def get_clients(self) -> List[ClientData]:
-        """Get all clients with their group discount information"""
+        """Get all clients with their type discount information"""
         query = """
-            SELECT c.id_cliente, c.nombre_cliente, c.id_grupo, c.id_tipo_cliente, g.descuento 
+            SELECT c.id_cliente, c.nombre_cliente, c.id_grupo, c.id_tipo_cliente, t.descuento 
             FROM cliente c
-            LEFT JOIN grupo g ON c.id_grupo = g.id_grupo
+            LEFT JOIN tipo_cliente t ON c.id_tipo_cliente = t.id_tipo_cliente
         """
         self.cursor.execute(query)
         clients_data = self.cursor.fetchall()
         
         clients = []
         for client_data in clients_data:
+            # Validate mandatory fields
+            if client_data['id_tipo_cliente'] is None:
+                raise ValueError(f"Client {client_data['nombre_cliente']} must have a type assigned")
+            if client_data['id_grupo'] is None:
+                raise ValueError(f"Client {client_data['nombre_cliente']} must have a group assigned")
+            
             clients.append(ClientData(
                 id_cliente=client_data['id_cliente'],
                 nombre_cliente=client_data['nombre_cliente'],
                 id_grupo=client_data['id_grupo'],
-                descuento=Decimal(str(client_data['descuento'])) if client_data['descuento'] else Decimal('0'),
+                descuento=Decimal(str(client_data['descuento'])) if client_data['descuento'] is not None else Decimal('0'),
                 id_tipo_cliente=client_data['id_tipo_cliente']
             ))
         
@@ -56,24 +62,68 @@ class DatabaseManager:
         
         return products
     
-    def get_product_price(self, product_id: int, client_type_id: int) -> Optional[Decimal]:
-        """Get product price for specific client type"""
+    def get_product_price(self, product_id: int, client_group_id: int) -> Optional[Decimal]:
+        """Get product price for specific client group"""
         query = """
-            SELECT precio FROM precio_por_tipo 
-            WHERE id_producto = %s AND id_tipo_cliente = %s
+            SELECT precio_base FROM precio_por_grupo 
+            WHERE id_producto = %s AND id_grupo = %s
         """
-        self.cursor.execute(query, (product_id, client_type_id))
+        self.cursor.execute(query, (product_id, client_group_id))
         result = self.cursor.fetchone()
         
         if result:
-            return Decimal(str(result['precio']))
+            return Decimal(str(result['precio_base']))
         return None
     
     def get_client_types(self) -> List[Dict[str, Any]]:
         """Get all client types"""
-        query = "SELECT id_tipo_cliente, nombre_tipo, descripcion FROM tipo_cliente"
+        query = "SELECT id_tipo_cliente, nombre_tipo FROM tipo_cliente"
         self.cursor.execute(query)
         return self.cursor.fetchall()
+    
+    def get_groups(self) -> List[Dict[str, Any]]:
+        """Get all groups"""
+        query = "SELECT id_grupo, clave_grupo FROM grupo ORDER BY clave_grupo"
+        self.cursor.execute(query)
+        return self.cursor.fetchall()
+    
+    def get_clients_by_group(self, group_id: int) -> List[ClientData]:
+        """Get clients filtered by group with their type information"""
+        query = """
+            SELECT c.id_cliente, c.nombre_cliente, c.id_grupo, c.id_tipo_cliente, 
+                   t.descuento, t.nombre_tipo
+            FROM cliente c
+            LEFT JOIN tipo_cliente t ON c.id_tipo_cliente = t.id_tipo_cliente
+            WHERE c.id_grupo = %s
+            ORDER BY c.nombre_cliente
+        """
+        self.cursor.execute(query, (group_id,))
+        clients_data = self.cursor.fetchall()
+        
+        clients = []
+        for client_data in clients_data:
+            # Validate mandatory fields
+            if client_data['id_tipo_cliente'] is None:
+                raise ValueError(f"Client {client_data['nombre_cliente']} must have a type assigned")
+            if client_data['id_grupo'] is None:
+                raise ValueError(f"Client {client_data['nombre_cliente']} must have a group assigned")
+            
+            clients.append(ClientData(
+                id_cliente=client_data['id_cliente'],
+                nombre_cliente=client_data['nombre_cliente'],
+                id_grupo=client_data['id_grupo'],
+                id_tipo_cliente=client_data['id_tipo_cliente'],
+                descuento=Decimal(str(client_data['descuento'])) if client_data['descuento'] is not None else Decimal('0')
+            ))
+        
+        return clients
+    
+    def get_client_type_name(self, type_id: int) -> str:
+        """Get client type name by ID"""
+        query = "SELECT nombre_tipo FROM tipo_cliente WHERE id_tipo_cliente = %s"
+        self.cursor.execute(query, (type_id,))
+        result = self.cursor.fetchone()
+        return result['nombre_tipo'] if result else "Desconocido"
     
     def save_invoice(self, client_id: int, products_data: List[Dict[str, Any]], 
                      sections_data: Optional[List[InvoiceSection]] = None) -> Optional[int]:

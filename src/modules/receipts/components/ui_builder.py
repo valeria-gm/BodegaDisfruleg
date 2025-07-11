@@ -8,11 +8,35 @@ class UIBuilder:
     def __init__(self, root: tk.Tk):
         self.root = root
     
+    def create_group_selection(self, parent: tk.Widget, group_names: List[str], 
+                              group_var: tk.StringVar, on_group_change: Callable,
+                              save_to_db_var: tk.BooleanVar) -> ttk.Combobox:
+        """Create group selection section"""
+        grupo_frame = tk.LabelFrame(parent, text="1. Seleccionar Grupo", font=("Arial", 12, "bold"))
+        grupo_frame.pack(fill="x", pady=(0, 10))
+        
+        frame_interno = tk.Frame(grupo_frame)
+        frame_interno.pack(fill="x", padx=10, pady=10)
+        
+        tk.Label(frame_interno, text="Grupo:", font=("Arial", 12)).pack(side="left", padx=5)
+        
+        grupo_combo = ttk.Combobox(frame_interno, textvariable=group_var, 
+                                   values=group_names, state="readonly", width=40)
+        grupo_combo.pack(side="left", padx=5)
+        grupo_combo.bind("<<ComboboxSelected>>", on_group_change)
+        
+        # Checkbox for auto-save
+        tk.Checkbutton(frame_interno, 
+                      text="Guardar en base de datos", 
+                      variable=save_to_db_var,
+                      font=("Arial", 10)).pack(side="right", padx=20)
+        
+        return grupo_combo
+    
     def create_client_section(self, parent: tk.Widget, client_names: List[str], 
-                             client_var: tk.StringVar, on_client_change: Callable,
-                             save_to_db_var: tk.BooleanVar) -> ttk.Combobox:
+                             client_var: tk.StringVar, on_client_change: Callable) -> ttk.Combobox:
         """Create client selection section"""
-        cliente_frame = tk.LabelFrame(parent, text="1. Seleccionar Cliente", font=("Arial", 12, "bold"))
+        cliente_frame = tk.LabelFrame(parent, text="2. Seleccionar Restaurante/Cliente", font=("Arial", 12, "bold"))
         cliente_frame.pack(fill="x", pady=(0, 10))
         
         frame_interno = tk.Frame(cliente_frame)
@@ -21,27 +45,29 @@ class UIBuilder:
         tk.Label(frame_interno, text="Cliente:", font=("Arial", 12)).pack(side="left", padx=5)
         
         cliente_combo = ttk.Combobox(frame_interno, textvariable=client_var, 
-                                   values=client_names, state="readonly", width=40)
+                                   values=client_names, state="disabled", width=40)
         cliente_combo.pack(side="left", padx=5)
         cliente_combo.bind("<<ComboboxSelected>>", on_client_change)
         
-        # Checkbox for auto-save
-        tk.Checkbutton(frame_interno, 
-                      text="Guardar en base de datos", 
-                      variable=save_to_db_var,
-                      font=("Arial", 10)).pack(side="right", padx=20)
+        # Info label for client type
+        type_label = tk.Label(frame_interno, text="(Seleccione un grupo primero)", 
+                             font=("Arial", 9), fg="gray")
+        type_label.pack(side="left", padx=10)
+        
+        # Store reference to type label for updates
+        cliente_combo.type_label = type_label
         
         return cliente_combo
     
     def create_section_selection(self, parent: tk.Widget, on_sectioning_toggle: Callable, 
                                on_manage_sections: Callable) -> tk.Frame:
         """Create section selection area"""
-        section_frame = tk.LabelFrame(parent, text="2. Configuración de Secciones", 
+        section_frame = tk.LabelFrame(parent, text="3. Configuración de Secciones", 
                                     font=("Arial", 12, "bold"))
         section_frame.pack(fill="x", pady=(0, 10))
         
         # Info label
-        info_label = tk.Label(section_frame, text="(Seleccione un cliente primero)", 
+        info_label = tk.Label(section_frame, text="(Seleccione un grupo y cliente primero)", 
                             font=("Arial", 9), fg="gray")
         info_label.pack(pady=5)
         
@@ -74,6 +100,24 @@ class UIBuilder:
         section_frame.sectioning_check.configure(state="normal")
         section_frame.info_label.configure(text="", fg="black")
     
+    def enable_client_selection(self, client_combo: ttk.Combobox):
+        """Enable client selection after group is selected"""
+        client_combo.configure(state="readonly")
+        client_combo.type_label.configure(text="(Seleccione un cliente)", fg="gray")
+    
+    def disable_client_selection(self, client_combo: ttk.Combobox):
+        """Disable client selection when no group is selected"""
+        client_combo.configure(state="disabled")
+        client_combo.type_label.configure(text="(Seleccione un grupo primero)", fg="gray")
+    
+    def update_client_type_display(self, client_combo: ttk.Combobox, client_type: str, discount: float):
+        """Update the client type display"""
+        if discount > 0:
+            type_text = f"Tipo: {client_type} ({discount}% descuento)"
+        else:
+            type_text = f"Tipo: {client_type}"
+        client_combo.type_label.configure(text=type_text, fg="blue")
+    
     def show_section_management_button(self, section_frame: tk.Frame):
         """Show section management button"""
         section_frame.section_mgmt_button.pack(side="left", padx=10)
@@ -86,7 +130,7 @@ class UIBuilder:
                                on_search_change: Callable, on_clear_search: Callable,
                                on_product_double_click: Callable) -> ttk.Treeview:
         """Create products search and selection section"""
-        productos_frame = tk.LabelFrame(parent, text="3. Buscar y Seleccionar Productos", 
+        productos_frame = tk.LabelFrame(parent, text="4. Buscar y Seleccionar Productos", 
                                       font=("Arial", 12, "bold"))
         productos_frame.pack(fill="both", expand=True, pady=(0, 10))
         
@@ -136,7 +180,7 @@ class UIBuilder:
     def create_cart_section(self, parent: tk.Widget, on_cart_double_click: Callable,
                            on_remove_item: Callable, on_clear_cart: Callable) -> tuple:
         """Create shopping cart section"""
-        carrito_frame = tk.LabelFrame(parent, text="4. Carrito de Compras", font=("Arial", 12, "bold"))
+        carrito_frame = tk.LabelFrame(parent, text="5. Carrito de Compras", font=("Arial", 12, "bold"))
         carrito_frame.pack(fill="both", expand=True, pady=(0, 10))
         
         # Cart table
@@ -243,6 +287,12 @@ class UIBuilder:
         for item_data in data:
             values = tuple(item_data[col] for col in tree["columns"] if col in item_data)
             tree.insert("", "end", values=values, tags=(str(item_data.get(id_key, "")),))
+    
+    def populate_combobox(self, combo: ttk.Combobox, values: List[str], clear_selection: bool = True):
+        """Populate combobox with values"""
+        combo['values'] = values
+        if clear_selection:
+            combo.set('')
     
     def create_section_management_dialog(self, parent: tk.Widget, get_sections: Callable,
                                        on_add_section: Callable, on_remove_section: Callable,

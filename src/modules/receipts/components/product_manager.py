@@ -37,17 +37,17 @@ class ProductManager:
         return next((p for p in self.all_products if p.id_producto == product_id), None)
     
     def get_product_base_price(self, product: ProductData) -> Decimal:
-        """Get base price for product based on client type"""
-        if not self.client_data or not self.client_data.id_tipo_cliente or not self.db_manager:
+        """Get base price for product based on client group"""
+        if not self.client_data or not self.client_data.id_grupo or not self.db_manager:
             return Decimal('0')
         
         # Check cache first
-        cache_key = f"{product.id_producto}_{self.client_data.id_tipo_cliente}"
+        cache_key = f"{product.id_producto}_{self.client_data.id_grupo}"
         if cache_key in self._price_cache:
             return self._price_cache[cache_key]
         
         # Get price from database
-        price = self.db_manager.get_product_price(product.id_producto, self.client_data.id_tipo_cliente)
+        price = self.db_manager.get_product_price(product.id_producto, self.client_data.id_grupo)
         if price is None:
             price = Decimal('0')
         
