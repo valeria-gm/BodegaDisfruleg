@@ -2,17 +2,17 @@
 CREATE DATABASE IF NOT EXISTS disfruleg;
 USE disfruleg;
 
--- Tabla GRUPO (para descuentos)
-CREATE TABLE grupo (
-    id_grupo INT AUTO_INCREMENT PRIMARY KEY,
-    clave_grupo VARCHAR(50) NOT NULL UNIQUE,
-    descuento DECIMAL(5,2) NOT NULL DEFAULT 0.00 -- porcentaje (ej. 10.00 = 10%)
-);
-
 -- Tabla TIPO_CLIENTE (define categorías de clientes)
 CREATE TABLE tipo_cliente (
     id_tipo_cliente INT AUTO_INCREMENT PRIMARY KEY,
     nombre_tipo VARCHAR(100) NOT NULL UNIQUE,
+    descuento DECIMAL(5,2) NOT NULL DEFAULT 0.00 CHECK (descuento BETWEEN 0 AND 100)-- porcentaje (ej. 10.00 = 10%)
+);
+
+-- Tabla GRUPO (para descuentos)
+CREATE TABLE grupo (
+    id_grupo INT AUTO_INCREMENT PRIMARY KEY,
+    clave_grupo VARCHAR(50) NOT NULL UNIQUE,
     descripcion VARCHAR(255) -- Opcional
 );
 
@@ -22,7 +22,7 @@ CREATE TABLE cliente (
     nombre_cliente VARCHAR(100) NOT NULL,
     telefono VARCHAR(20),
     correo VARCHAR(100),
-    id_grupo INT, -- Opcional (para descuentos)
+    id_grupo INT NOT NULL, -- Obligatorio
     id_tipo_cliente INT NOT NULL, -- Obligatorio
     FOREIGN KEY (id_grupo) REFERENCES grupo(id_grupo),
     FOREIGN KEY (id_tipo_cliente) REFERENCES tipo_cliente(id_tipo_cliente)
@@ -37,16 +37,16 @@ CREATE TABLE producto (
     es_especial BOOLEAN DEFAULT FALSE
 );
 
--- Tabla PRECIO_POR_TIPO (precios específicos por tipo de cliente)
-CREATE TABLE precio_por_tipo (
-    id_precio_tipo INT AUTO_INCREMENT PRIMARY KEY,
-    id_tipo_cliente INT NOT NULL,
+-- Tabla PRECIO_POR_GRUPO (precios específicos por Grupo de cliente)
+CREATE TABLE precio_por_grupo (
+    id_precio_grupo INT AUTO_INCREMENT PRIMARY KEY,
+    id_grupo INT NOT NULL,
     id_producto INT NOT NULL,
-    precio DECIMAL(10,2) NOT NULL,
+    precio_base DECIMAL(10,2) NOT NULL,
     fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (id_tipo_cliente) REFERENCES tipo_cliente(id_tipo_cliente),
+    FOREIGN KEY (id_grupo) REFERENCES grupo(id_grupo),
     FOREIGN KEY (id_producto) REFERENCES producto(id_producto),
-    UNIQUE KEY (id_tipo_cliente, id_producto) -- Cada combinación tipo-producto es única; no puede existir más de un precio para la misma combinación
+    UNIQUE KEY (id_grupo, id_producto) -- Cada combinación grupo-producto es única
 );
 
 -- Tabla FACTURA

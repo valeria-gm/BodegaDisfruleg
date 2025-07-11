@@ -5,18 +5,19 @@ SELECT
     p.id_producto,
     p.nombre_producto,
     p.unidad_producto,
-    tc.id_tipo_cliente,
-    tc.nombre_tipo AS tipo_cliente,
-    pt.precio AS precio_base_para_tipo,
     g.id_grupo,
     g.clave_grupo,
-    g.descuento,
-    ROUND(pt.precio * (1 - IFNULL(g.descuento, 0)/100), 2) AS precio_final_con_descuento
+    pg.precio_base AS precio_base_para_grupo,
+    tc.id_tipo_cliente,
+    tc.nombre_tipo AS tipo_cliente,
+    tc.descuento,
+    ROUND(pg.precio_base * (1 - tc.descuento/100), 2) AS precio_final_con_descuento
 FROM producto p
-JOIN precio_por_tipo pt ON p.id_producto = pt.id_producto
-JOIN tipo_cliente tc ON pt.id_tipo_cliente = tc.id_tipo_cliente
-LEFT JOIN grupo g ON 1=1  -- Alternativa si realmente se necesita el CROSS JOIN
-ORDER BY p.nombre_producto, tc.nombre_tipo, g.clave_grupo;
+CROSS JOIN grupo g
+JOIN precio_por_grupo pg ON p.id_producto = pg.id_producto AND g.id_grupo = pg.id_grupo
+JOIN tipo_cliente tc  -- Mostramos todos los tipos posibles
+ORDER BY p.nombre_producto, g.clave_grupo, tc.nombre_tipo;
 
--- Propósito principal:
--- Ser una herramienta de consulta y referencia para precios actuales antes de facturar.
+-- Propósito:
+-- Muestra los precios con posibles descuentos para cada combinación grupo-tipo de cliente
+-- Nota: Esta vista ahora muestra todas las combinaciones posibles, no asume que el grupo tiene un tipo específico

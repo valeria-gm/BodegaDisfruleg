@@ -1,20 +1,19 @@
 USE disfruleg;
 
 -- Insertar tipos de cliente
-INSERT INTO tipo_cliente (nombre_tipo, descripcion) VALUES
-('Tipo1', 'Clientes que compran pequeñas cantidades'),
-('Tipo2', 'Clientes con compras al por mayor'),
-('Tipo3', NULL);
+INSERT INTO tipo_cliente (nombre_tipo, descuento) VALUES
+('Tipo1', 15.00),
+('Tipo2', 0.00 );
 
 -- Insertar grupos
-INSERT INTO grupo (clave_grupo, descuento) VALUES 
-('Aeropuerto', 5.00),    
-('Mrl', 10.00),          
-('Salerosa', 20.00),     
-('Bocanegra', 15.00),
-('General', 0.00),
-('3M', 12.00),
-('Especial', 25.00);
+INSERT INTO grupo (clave_grupo, descripcion) VALUES 
+('Aeropuerto', NULL),    
+('Mrl', NULL),          
+('Salerosa', NULL),     
+('Bocanegra', NULL),
+('General', NULL),
+('3M', NULL),
+('Especial', NULL);
 
 -- Insertar productos (sin precio_base)
 INSERT INTO producto (nombre_producto, unidad_producto, stock, es_especial) VALUES
@@ -35,9 +34,9 @@ INSERT INTO producto (nombre_producto, unidad_producto, stock, es_especial) VALU
 ('Tenedores', 'caja', 20, TRUE),
 ('Tequila', 'botella', 15, TRUE);
 
--- Insertar precios por tipo de cliente
--- Precios para Minoristas (tipo 1)
-INSERT INTO precio_por_tipo (id_tipo_cliente, id_producto, precio) VALUES
+-- Insertar precios por Grupo de cliente
+-- Precios para Aeropuerto
+INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
 (1, 1, 55.00), (1, 2, 49.00), (1, 3, 46.00),
 (1, 4, 77.00), (1, 5, 49.00), (1, 6, 35.50),
 (1, 7, 28.00), (1, 8, 22.00), (1, 9, 100.00),
@@ -45,8 +44,8 @@ INSERT INTO precio_por_tipo (id_tipo_cliente, id_producto, precio) VALUES
 (1, 13, 20.00), (1, 14, 53.00), (1, 15, 33.00),
 (1, 16, 600.00);
 
--- Precios para Mayoristas (tipo 2)
-INSERT INTO precio_por_tipo (id_tipo_cliente, id_producto, precio) VALUES
+-- Precios para Mrl
+INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
 (2, 1, 45.00), (2, 2, 40.00), (2, 3, 38.00),
 (2, 4, 65.00), (2, 5, 40.00), (2, 6, 30.00),
 (2, 7, 24.00), (2, 8, 18.00), (2, 9, 85.00),
@@ -54,8 +53,8 @@ INSERT INTO precio_por_tipo (id_tipo_cliente, id_producto, precio) VALUES
 (2, 13, 16.00), (2, 14, 45.00), (2, 15, 28.00),
 (2, 16, 550.00);
 
--- Precios para Distribuidores (tipo 3)
-INSERT INTO precio_por_tipo (id_tipo_cliente, id_producto, precio) VALUES
+-- Precios para Salerosa
+INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
 (3, 1, 40.00), (3, 2, 35.00), (3, 3, 34.00),
 (3, 4, 60.00), (3, 5, 35.00), (3, 6, 28.00),
 (3, 7, 22.00), (3, 8, 16.00), (3, 9, 80.00),
@@ -63,9 +62,45 @@ INSERT INTO precio_por_tipo (id_tipo_cliente, id_producto, precio) VALUES
 (3, 13, 15.00), (3, 14, 42.00), (3, 15, 25.00),
 (3, 16, 520.00);
 
+-- Precios para Bocanegra
+INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
+(4, 1, 45.00), (4, 2, 45.00), (4, 3, 44.00),
+(4, 4, 65.00), (4, 5, 45.00), (4, 6, 38.00),
+(4, 7, 32.00), (4, 8, 26.00), (4, 9, 85.00),
+(4, 10, 105.00), (4, 11, 135.00), (4, 12, 135.00),
+(4, 13, 25.00), (4, 14, 45.00), (4, 15, 35.00),
+(4, 16, 620.00);
+
+-- Precios para General
+INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
+(5, 1, 50.00), (5, 2, 45.00), (5, 3, 44.00),
+(5, 4, 70.00), (5, 5, 45.00), (5, 6, 38.00),
+(5, 7, 32.00), (5, 8, 26.00), (5, 9, 90.00),
+(5, 10, 105.00), (5, 11, 135.00), (5, 12, 135.00),
+(5, 13, 25.00), (5, 14, 52.00), (5, 15, 35.00),
+(5, 16, 620.00);
+
+-- Precios para 3M
+INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
+(6, 1, 30.00), (6, 2, 25.00), (6, 3, 24.00),
+(6, 4, 50.00), (6, 5, 25.00), (6, 6, 18.00),
+(6, 7, 12.00), (6, 8, 16.00), (6, 9, 70.00),
+(6, 10, 85.00), (6, 11, 105.00), (6, 12, 115.00),
+(6, 13, 15.00), (6, 14, 32.00), (6, 15, 15.00),
+(6, 16, 520.00);
+
+-- Precios para Especial
+INSERT INTO precio_por_grupo (id_grupo, id_producto, precio_base) VALUES
+(7, 1, 33.00), (7, 2, 23.00), (7, 3, 23.00),
+(7, 4, 53.00), (7, 5, 23.00), (7, 6, 13.00),
+(7, 7, 13.00), (7, 8, 13.00), (7, 9, 73.00),
+(7, 10, 83.00), (7, 11, 103.00), (7, 12, 113.00),
+(7, 13, 13.00), (7, 14, 33.00), (7, 15, 13.00),
+(7, 16, 523.00);
+
 -- Insertar clientes
 INSERT INTO cliente (nombre_cliente, telefono, correo, id_grupo, id_tipo_cliente) VALUES
-('Ana Pérez', '5551234567', 'ana.perez@example.com', 1, 1),  -- Minorista con Grupo1
-('Luis Gómez', '5559876543', 'luis.gomez@example.com', 3, 2), -- Mayorista con Grupo3
-('María López', '5551112222', NULL, 2, 1),                   -- Minorista con Grupo2
-('Carlos Méndez', '5552223333', 'carlos.m@example.com', NULL, 3); -- Distribuidor sin grupo
+('Restaurante 1', '5551234567', 'ana.perez@example.com', 1, 1),  
+('Restaurante 2', '5559876543', 'luis.gomez@example.com', 3, 2), 
+('Restaurante 3', '5551112222', NULL, 2, 2),                   
+('Restaurante 4', '5552223333', 'carlos.m@example.com', 5, 2); 
