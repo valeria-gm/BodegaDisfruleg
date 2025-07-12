@@ -2,6 +2,7 @@
 """
 Module Launcher Script
 Properly launches business modules with correct Python path and imports
+Updated to use consolidated receipt module architecture
 """
 
 import sys
@@ -14,13 +15,20 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
 def launch_receipts_module(user_data=None):
-    """Launch the receipts generator module with improved multi-tab interface"""
+    """Launch the receipts generator module with consolidated multi-tab interface"""
     try:
         # Change to project root directory
         os.chdir(project_root)
         
-        # Import and run the improved simple tabbed module
-        from src.modules.receipts.simple_tabbed_receipt_app import SimpleTabbedReceiptApp
+        # Try consolidated module first
+        try:
+            from src.modules.receipts.tabbed_receipt_app import TabbedReceiptApp
+            print("✅ Using consolidated TabbedReceiptApp")
+        except ImportError as e:
+            print(f"⚠️ Consolidated module not available: {e}")
+            # Fallback to single-tab module
+            from src.modules.receipts.receipt_generator_refactored import ReciboAppMejorado as FallbackApp
+            print("✅ Using fallback single-tab module")
         
         # Create main window
         root = tk.Tk()
@@ -33,22 +41,28 @@ def launch_receipts_module(user_data=None):
                 'username': 'test'
             }
         
-        # Launch the improved simple tabbed application
-        app = SimpleTabbedReceiptApp(root, user_data)
+        # Launch the application
+        if 'TabbedReceiptApp' in locals():
+            app = TabbedReceiptApp(root, user_data)
+        else:
+            app = FallbackApp(root, user_data)
+        
         root.mainloop()
         
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos: {str(e)}")
         print(f"Error launching receipts module: {e}")
+        import traceback
+        traceback.print_exc()
 
-def launch_receipts_module_clean_tabs(user_data=None):
-    """Launch the receipts generator module with clean multi-tab interface (fallback)"""
+def launch_receipts_module_isolated(user_data=None):
+    """Launch the receipts generator module with isolated multi-tab interface"""
     try:
         # Change to project root directory
         os.chdir(project_root)
         
-        # Import and run the clean tabbed module
-        from src.modules.receipts.clean_tabbed_receipt_app import CleanTabbedReceiptApp
+        # Import and run the isolated tabbed module
+        from src.modules.receipts.tabbed_receipt_app import IsolatedTabbedReceiptApp
         
         # Create main window
         root = tk.Tk()
@@ -61,22 +75,22 @@ def launch_receipts_module_clean_tabs(user_data=None):
                 'username': 'test'
             }
         
-        # Launch the clean tabbed application
-        app = CleanTabbedReceiptApp(root, user_data)
+        # Launch the isolated tabbed application
+        app = IsolatedTabbedReceiptApp(root, user_data)
         root.mainloop()
         
     except Exception as e:
-        messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos: {str(e)}")
-        print(f"Error launching receipts module: {e}")
+        messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos aislado: {str(e)}")
+        print(f"Error launching isolated receipts module: {e}")
 
-def launch_receipts_module_original_tabs(user_data=None):
-    """Launch the receipts generator module with original multi-tab interface (fallback)"""
+def launch_receipts_module_legacy(user_data=None):
+    """Launch the receipts generator module with consolidated interface using explicit mode"""
     try:
         # Change to project root directory
         os.chdir(project_root)
         
-        # Import and run the original tabbed module
-        from src.modules.receipts.tabbed_receipt_app import TabbedReceiptApp
+        # Import and run the consolidated module with explicit mode
+        from src.modules.receipts.tabbed_receipt_app import TabbedReceiptAppConsolidated
         
         # Create main window
         root = tk.Tk()
@@ -89,13 +103,13 @@ def launch_receipts_module_original_tabs(user_data=None):
                 'username': 'test'
             }
         
-        # Launch the original tabbed application
-        app = TabbedReceiptApp(root, user_data)
+        # Launch the consolidated application with standard mode
+        app = TabbedReceiptAppConsolidated(root, user_data, mode="standard")
         root.mainloop()
         
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos: {str(e)}")
-        print(f"Error launching receipts module: {e}")
+        print(f"Error launching legacy receipts module: {e}")
 
 def launch_receipts_module_single(user_data=None):
     """Launch the receipts generator module with single-tab interface (legacy)"""

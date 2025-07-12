@@ -1,63 +1,123 @@
 import tkinter as tk
 from tkinter import ttk, simpledialog
-from typing import Callable, List, Dict, Any
+from typing import Callable, List, Dict, Any, Optional
+from functools import wraps
+
+def handle_ui_errors(error_msg_template: str = "Error en operación UI"):
+    """Decorator for handling UI errors consistently"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                from tkinter import messagebox
+                messagebox.showerror("Error", f"{error_msg_template}: {str(e)}")
+                print(f"UI Error in {func.__name__}: {e}")
+                return None
+        return wrapper
+    return decorator
 
 class UIBuilder:
-    """Handles UI component creation for receipt application"""
+    """Handles UI component creation for receipt application with factory patterns"""
     
     def __init__(self, root: tk.Tk):
         self.root = root
     
+    def create_standard_section(self, parent: tk.Widget, title: str, label_text: str,
+                               values: List[str], variable: tk.StringVar, 
+                               callback: Callable, state: str = "readonly",
+                               width: int = 40, extra_widgets: List[Dict] = None) -> ttk.Combobox:
+        """Factory method for creating standard LabelFrame + Combobox sections"""
+        # Create main frame
+        frame = tk.LabelFrame(parent, text=title, font=("Arial", 12, "bold"))
+        frame.pack(fill="x", pady=(0, 10))
+        
+        # Inner frame
+        inner_frame = tk.Frame(frame)
+        inner_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Label
+        tk.Label(inner_frame, text=label_text, font=("Arial", 12)).pack(side="left", padx=5)
+        
+        # Combobox
+        combo = ttk.Combobox(inner_frame, textvariable=variable, 
+                            values=values, state=state, width=width)
+        combo.pack(side="left", padx=5)
+        combo.bind("<<ComboboxSelected>>", callback)
+        
+        # Add extra widgets if specified
+        if extra_widgets:
+            for widget_config in extra_widgets:
+                widget_type = widget_config.get('type')
+                if widget_type == 'checkbutton':
+                    tk.Checkbutton(inner_frame, 
+                                  text=widget_config.get('text', ''),
+                                  variable=widget_config.get('variable'),
+                                  font=widget_config.get('font', ("Arial", 10))).pack(
+                                      side=widget_config.get('side', 'right'), 
+                                      padx=widget_config.get('padx', 20))
+                elif widget_type == 'label':
+                    label = tk.Label(inner_frame, 
+                                   text=widget_config.get('text', ''),
+                                   font=widget_config.get('font', ("Arial", 9)),
+                                   fg=widget_config.get('fg', 'gray'))
+                    label.pack(side=widget_config.get('side', 'left'), 
+                              padx=widget_config.get('padx', 10))
+                    # Store reference if needed
+                    if 'ref_name' in widget_config:
+                        setattr(combo, widget_config['ref_name'], label)
+        
+        return combo
+    
+    @handle_ui_errors("Error al crear sección de grupo")
     def create_group_selection(self, parent: tk.Widget, group_names: List[str], 
                               group_var: tk.StringVar, on_group_change: Callable,
                               save_to_db_var: tk.BooleanVar) -> ttk.Combobox:
-        """Create group selection section"""
-        grupo_frame = tk.LabelFrame(parent, text="1. Seleccionar Grupo", font=("Arial", 12, "bold"))
-        grupo_frame.pack(fill="x", pady=(0, 10))
+        """Create group selection section using factory method"""
+        extra_widgets = [{
+            'type': 'checkbutton',
+            'text': 'Guardar en base de datos',
+            'variable': save_to_db_var,
+            'font': ("Arial", 10),
+            'side': 'right',
+            'padx': 20
+        }]
         
-        frame_interno = tk.Frame(grupo_frame)
-        frame_interno.pack(fill="x", padx=10, pady=10)
-        
-        tk.Label(frame_interno, text="Grupo:", font=("Arial", 12)).pack(side="left", padx=5)
-        
-        grupo_combo = ttk.Combobox(frame_interno, textvariable=group_var, 
-                                   values=group_names, state="readonly", width=40)
-        grupo_combo.pack(side="left", padx=5)
-        grupo_combo.bind("<<ComboboxSelected>>", on_group_change)
-        
-        # Checkbox for auto-save
-        tk.Checkbutton(frame_interno, 
-                      text="Guardar en base de datos", 
-                      variable=save_to_db_var,
-                      font=("Arial", 10)).pack(side="right", padx=20)
-        
-        return grupo_combo
+        return self.create_standard_section(
+            parent=parent,
+            title="1. Seleccionar Grupo",
+            label_text="Grupo:",
+            values=group_names,
+            variable=group_var,
+            callback=on_group_change,
+            extra_widgets=extra_widgets
+        )
     
+    @handle_ui_errors("Error al crear sección de cliente")
     def create_client_section(self, parent: tk.Widget, client_names: List[str], 
                              client_var: tk.StringVar, on_client_change: Callable) -> ttk.Combobox:
-        """Create client selection section"""
-        cliente_frame = tk.LabelFrame(parent, text="2. Seleccionar Restaurante/Cliente", font=("Arial", 12, "bold"))
-        cliente_frame.pack(fill="x", pady=(0, 10))
+        """Create client selection section using factory method"""
+        extra_widgets = [{
+            'type': 'label',
+            'text': '(Seleccione un grupo primero)',
+            'font': ("Arial", 9),
+            'fg': 'gray',
+            'side': 'left',
+            'padx': 10,
+            'ref_name': 'type_label'
+        }]
         
-        frame_interno = tk.Frame(cliente_frame)
-        frame_interno.pack(fill="x", padx=10, pady=10)
-        
-        tk.Label(frame_interno, text="Cliente:", font=("Arial", 12)).pack(side="left", padx=5)
-        
-        cliente_combo = ttk.Combobox(frame_interno, textvariable=client_var, 
-                                   values=client_names, state="disabled", width=40)
-        cliente_combo.pack(side="left", padx=5)
-        cliente_combo.bind("<<ComboboxSelected>>", on_client_change)
-        
-        # Info label for client type
-        type_label = tk.Label(frame_interno, text="(Seleccione un grupo primero)", 
-                             font=("Arial", 9), fg="gray")
-        type_label.pack(side="left", padx=10)
-        
-        # Store reference to type label for updates
-        cliente_combo.type_label = type_label
-        
-        return cliente_combo
+        return self.create_standard_section(
+            parent=parent,
+            title="2. Seleccionar Restaurante/Cliente",
+            label_text="Cliente:",
+            values=client_names,
+            variable=client_var,
+            callback=on_client_change,
+            state="disabled",
+            extra_widgets=extra_widgets
+        )
     
     def create_section_selection(self, parent: tk.Widget, on_sectioning_toggle: Callable, 
                                on_manage_sections: Callable) -> tk.Frame:
