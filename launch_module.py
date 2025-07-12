@@ -14,12 +14,96 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
 def launch_receipts_module(user_data=None):
-    """Launch the receipts generator module"""
+    """Launch the receipts generator module with improved multi-tab interface"""
     try:
         # Change to project root directory
         os.chdir(project_root)
         
-        # Import and run the module
+        # Import and run the improved simple tabbed module
+        from src.modules.receipts.simple_tabbed_receipt_app import SimpleTabbedReceiptApp
+        
+        # Create main window
+        root = tk.Tk()
+        
+        # Default user data if none provided
+        if user_data is None:
+            user_data = {
+                'nombre_completo': 'Usuario de Prueba',
+                'rol': 'admin',
+                'username': 'test'
+            }
+        
+        # Launch the improved simple tabbed application
+        app = SimpleTabbedReceiptApp(root, user_data)
+        root.mainloop()
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos: {str(e)}")
+        print(f"Error launching receipts module: {e}")
+
+def launch_receipts_module_clean_tabs(user_data=None):
+    """Launch the receipts generator module with clean multi-tab interface (fallback)"""
+    try:
+        # Change to project root directory
+        os.chdir(project_root)
+        
+        # Import and run the clean tabbed module
+        from src.modules.receipts.clean_tabbed_receipt_app import CleanTabbedReceiptApp
+        
+        # Create main window
+        root = tk.Tk()
+        
+        # Default user data if none provided
+        if user_data is None:
+            user_data = {
+                'nombre_completo': 'Usuario de Prueba',
+                'rol': 'admin',
+                'username': 'test'
+            }
+        
+        # Launch the clean tabbed application
+        app = CleanTabbedReceiptApp(root, user_data)
+        root.mainloop()
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos: {str(e)}")
+        print(f"Error launching receipts module: {e}")
+
+def launch_receipts_module_original_tabs(user_data=None):
+    """Launch the receipts generator module with original multi-tab interface (fallback)"""
+    try:
+        # Change to project root directory
+        os.chdir(project_root)
+        
+        # Import and run the original tabbed module
+        from src.modules.receipts.tabbed_receipt_app import TabbedReceiptApp
+        
+        # Create main window
+        root = tk.Tk()
+        
+        # Default user data if none provided
+        if user_data is None:
+            user_data = {
+                'nombre_completo': 'Usuario de Prueba',
+                'rol': 'admin',
+                'username': 'test'
+            }
+        
+        # Launch the original tabbed application
+        app = TabbedReceiptApp(root, user_data)
+        root.mainloop()
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos: {str(e)}")
+        print(f"Error launching receipts module: {e}")
+
+def launch_receipts_module_single(user_data=None):
+    """Launch the receipts generator module with single-tab interface (legacy)"""
+    try:
+        # Change to project root directory
+        os.chdir(project_root)
+        
+        # Import and run the single-tab module
         from src.modules.receipts.receipt_generator_refactored import ReciboAppMejorado
         
         # Create main window
@@ -33,7 +117,7 @@ def launch_receipts_module(user_data=None):
                 'username': 'test'
             }
         
-        # Launch the application
+        # Launch the single-tab application
         app = ReciboAppMejorado(root, user_data)
         root.mainloop()
         

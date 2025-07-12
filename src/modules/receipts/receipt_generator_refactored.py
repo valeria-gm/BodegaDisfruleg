@@ -362,12 +362,16 @@ class ReciboAppMejorado:
         def get_updated_sections():
             return self.cart_manager.get_sections()
         
+        def get_section_item_count(section_id: str) -> int:
+            return len(self.cart_manager.get_section_items(section_id))
+
         self.ui_builder.create_section_management_dialog(
             self.root, get_updated_sections,
             self.cart_manager.add_section,
             self.cart_manager.remove_section,
             self.cart_manager.rename_section,
-            self._refresh_section_management
+            self._refresh_section_management,
+            get_section_item_count
         )
     
     def _enable_section_selection(self):

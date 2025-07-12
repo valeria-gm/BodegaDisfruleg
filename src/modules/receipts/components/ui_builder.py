@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, simpledialog
 from typing import Callable, List, Dict, Any
 
 class UIBuilder:
@@ -296,7 +296,8 @@ class UIBuilder:
     
     def create_section_management_dialog(self, parent: tk.Widget, get_sections: Callable,
                                        on_add_section: Callable, on_remove_section: Callable,
-                                       on_rename_section: Callable, on_refresh: Callable = None) -> None:
+                                       on_rename_section: Callable, on_refresh: Callable = None,
+                                       get_section_item_count: Callable = None) -> None:
         """Create section management dialog"""
         dialog = tk.Toplevel(parent)
         dialog.title("Gestionar Secciones")
@@ -331,7 +332,10 @@ class UIBuilder:
             sections = get_sections()
             if hasattr(sections, 'items'):
                 for section_id, section in sections.items():
-                    item_count = getattr(section, 'item_count', 0)
+                    if get_section_item_count:
+                        item_count = get_section_item_count(section_id)
+                    else:
+                        item_count = len(getattr(section, 'items', []))
                     sections_listbox.insert(tk.END, f"{section.name} ({item_count} items)")
         
         refresh_sections()
@@ -341,7 +345,7 @@ class UIBuilder:
         buttons_frame.pack(pady=10)
         
         def add_section():
-            name = tk.simpledialog.askstring("Nueva Sección", "Nombre de la sección:")
+            name = simpledialog.askstring("Nueva Sección", "Nombre de la sección:")
             if name and name.strip():
                 on_add_section(name.strip())
                 refresh_sections()
@@ -383,7 +387,7 @@ class UIBuilder:
                         section_id = sid
                         break
                 
-                new_name = tk.simpledialog.askstring("Renombrar Sección", 
+                new_name = simpledialog.askstring("Renombrar Sección", 
                                                    "Nuevo nombre:", initialvalue=current_name)
                 if new_name and new_name.strip() and section_id:
                     if on_rename_section(section_id, new_name.strip()):
