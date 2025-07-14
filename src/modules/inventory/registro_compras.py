@@ -262,19 +262,20 @@ class ComprasApp:
             return
             
         try:
-            cantidad = self.cantidad_var.get()
-            precio = self.precio_var.get()
+            # Convertir a Decimal para evitar problemas con float
+            cantidad = Decimal(str(self.cantidad_var.get()))
+            precio = Decimal(str(self.precio_var.get()))
             fecha = self.fecha_var.get()
             
-            if cantidad <= 0:
+            if cantidad <= Decimal('0'):
                 messagebox.showerror("Error", "La cantidad debe ser mayor que 0")
                 return
                 
-            if precio <= 0:
+            if precio <= Decimal('0'):
                 messagebox.showerror("Error", "El precio debe ser mayor que 0")
                 return
-        except:
-            messagebox.showerror("Error", "Verifique que cantidad y precio sean números válidos")
+        except Exception as e:
+            messagebox.showerror("Error", f"Verifique que cantidad y precio sean números válidos: {str(e)}")
             return
         
         # Obtener ID del producto seleccionado
@@ -507,15 +508,19 @@ class ComprasApp:
     
     def save_edit_compra(self, popup, compra_id, fecha, cantidad, precio):
         """Guardar cambios en la compra"""
-        # Validar
-        if cantidad <= 0:
-            messagebox.showerror("Error", "La cantidad debe ser mayor que 0")
-            return
-        if precio <= 0:
-            messagebox.showerror("Error", "El precio debe ser mayor que 0")
-            return
-        
         try:
+            # Convertir a Decimal
+            cantidad = Decimal(str(cantidad))
+            precio = Decimal(str(precio))
+            
+            # Validar
+            if cantidad <= Decimal('0'):
+                messagebox.showerror("Error", "La cantidad debe ser mayor que 0")
+                return
+            if precio <= Decimal('0'):
+                messagebox.showerror("Error", "El precio debe ser mayor que 0")
+                return
+            
             # Obtener cantidad anterior para ajustar stock
             self.cursor.execute("""
                 SELECT cantidad_compra, id_producto 
@@ -527,22 +532,22 @@ class ComprasApp:
             if not old_data:
                 raise Exception("Compra no encontrada")
             
-            diferencia_cantidad = cantidad - old_data['cantidad_compra']
+            diferencia_cantidad = cantidad - Decimal(str(old_data['cantidad_compra']))
             
             # Actualizar en la base de datos
             self.cursor.execute("""
                 UPDATE compra 
                 SET fecha_compra = %s, cantidad_compra = %s, precio_unitario_compra = %s
                 WHERE id_compra = %s
-            """, (fecha, cantidad, precio, compra_id))
+            """, (fecha, float(cantidad), float(precio), compra_id))
             
             # Actualizar stock del producto
-            if diferencia_cantidad != 0:
+            if diferencia_cantidad != Decimal('0'):
                 self.cursor.execute("""
                     UPDATE producto 
                     SET stock = stock + %s 
                     WHERE id_producto = %s
-                """, (diferencia_cantidad, old_data['id_producto']))
+                """, (float(diferencia_cantidad), old_data['id_producto']))
             
             self.conn.commit()
             

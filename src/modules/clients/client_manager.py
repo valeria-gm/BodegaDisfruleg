@@ -15,9 +15,14 @@ class ClientManagerApp:
         # Connect to database
         self.conn = conectar()
         self.cursor = self.conn.cursor(dictionary=True)
+
+        # Inicializar las listas antes de cargar los datos
+        self.groups = []
+        self.client_types = []
         
         # Load groups
         self.load_groups()
+        self.load_client_types()
         
         # Variables
         self.search_var = tk.StringVar()
@@ -28,8 +33,13 @@ class ClientManagerApp:
         
     def load_groups(self):
         """Load groups from database"""
-        self.cursor.execute("SELECT id_grupo, clave_grupo, descuento FROM grupo ORDER BY clave_grupo")
+        self.cursor.execute("SELECT id_grupo, clave_grupo FROM grupo ORDER BY clave_grupo")
         self.groups = self.cursor.fetchall()
+        
+    def load_client_types(self):
+        """Load client types from database"""
+        self.cursor.execute("SELECT id_tipo_cliente, nombre_tipo, descuento FROM tipo_cliente ORDER BY nombre_tipo")
+        self.client_types = self.cursor.fetchall()
         
     def create_interface(self):
         """Create the user interface"""
@@ -72,7 +82,7 @@ class ClientManagerApp:
         
         # Treeview for clients
         self.client_tree = ttk.Treeview(table_frame, 
-                                      columns=("id", "nombre", "telefono", "correo", "grupo", "descuento"),
+                                      columns=("id", "nombre", "telefono", "correo", "grupo", "tipo_cliente", "descuento"),
                                       show="headings", 
                                       yscrollcommand=scrollbar.set)
         
@@ -82,14 +92,16 @@ class ClientManagerApp:
         self.client_tree.heading("telefono", text="Teléfono")
         self.client_tree.heading("correo", text="Correo")
         self.client_tree.heading("grupo", text="Grupo")
+        self.client_tree.heading("tipo_cliente", text="Tipo Cliente")
         self.client_tree.heading("descuento", text="Descuento (%)")
         
         self.client_tree.column("id", width=50)
-        self.client_tree.column("nombre", width=200)
-        self.client_tree.column("telefono", width=120)
-        self.client_tree.column("correo", width=200)
-        self.client_tree.column("grupo", width=150)
-        self.client_tree.column("descuento", width=100)
+        self.client_tree.column("nombre", width=150)
+        self.client_tree.column("telefono", width=100)
+        self.client_tree.column("correo", width=150)
+        self.client_tree.column("grupo", width=100)
+        self.client_tree.column("tipo_cliente", width=120)
+        self.client_tree.column("descuento", width=80)
         
         self.client_tree.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=self.client_tree.yview)
@@ -103,26 +115,31 @@ class ClientManagerApp:
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         
-        # Add group manager button
-        group_button_frame = tk.Frame(self.root)
-        group_button_frame.pack(fill="x", pady=5, padx=10)
+        # Add group and type manager buttons
+        manager_button_frame = tk.Frame(self.root)
+        manager_button_frame.pack(fill="x", pady=5, padx=10)
         
-        tk.Button(group_button_frame, text="Administrar Grupos", 
+        tk.Button(manager_button_frame, text="Administrar Grupos", 
                  command=self.manage_groups,
                  bg="#673AB7", fg="white", padx=10, pady=3).pack(side="left")
-    
+        
+        tk.Button(manager_button_frame, text="Administrar Tipos", 
+                 command=self.manage_client_types,
+                 bg="#009688", fg="white", padx=10, pady=3).pack(side="left", padx=5)
+        
     def load_clients(self):
         """Load clients from database"""
         # Clear existing items
         for item in self.client_tree.get_children():
             self.client_tree.delete(item)
             
-        # Get clients
+        # Get clients with group and client type info
         self.cursor.execute("""
             SELECT c.id_cliente, c.nombre_cliente, c.telefono, c.correo, 
-                   g.clave_grupo, g.descuento, c.id_grupo
+                   g.clave_grupo, tc.nombre_tipo, tc.descuento
             FROM cliente c
-            LEFT JOIN grupo g ON c.id_grupo = g.id_grupo
+            JOIN grupo g ON c.id_grupo = g.id_grupo
+            JOIN tipo_cliente tc ON c.id_tipo_cliente = tc.id_tipo_cliente
             ORDER BY c.nombre_cliente
         """)
         
@@ -131,11 +148,12 @@ class ClientManagerApp:
         # Store all clients for reference and filtering
         self.all_clients = clients
         
-        # Insert clients into treeview
+         # Insert clients into treeview
         for client in clients:
             telefono = client.get('telefono', '') or '---'
             correo = client.get('correo', '') or '---'
             grupo = client.get('clave_grupo', '') or '---'
+            tipo_cliente = client.get('nombre_tipo', '') or '---'
             descuento = client.get('descuento', '') or '---'
             
             self.client_tree.insert("", "end", 
@@ -144,6 +162,7 @@ class ClientManagerApp:
                                          telefono,
                                          correo,
                                          grupo,
+                                         tipo_cliente,
                                          descuento),
                                   tags=(str(client.get('id_grupo', '')),))
             
@@ -159,15 +178,17 @@ class ClientManagerApp:
         
         # Filter clients
         for client in self.all_clients:
-            # Search in name, phone, email and group
+            # Search in name, phone, email, group and client type
             if (search_text in client["nombre_cliente"].lower() or 
                 (client.get('telefono') and search_text in client.get('telefono').lower()) or
                 (client.get('correo') and search_text in client.get('correo', '').lower()) or
-                (client.get('clave_grupo') and search_text in client.get('clave_grupo', '').lower())):
+                (client.get('clave_grupo') and search_text in client.get('clave_grupo', '').lower()) or
+                (client.get('nombre_tipo') and search_text in client.get('nombre_tipo', '').lower())):
                 
                 telefono = client.get('telefono', '') or '---'
                 correo = client.get('correo', '') or '---'
                 grupo = client.get('clave_grupo', '') or '---'
+                tipo_cliente = client.get('nombre_tipo', '') or '---'
                 descuento = client.get('descuento', '') or '---'
                 
                 self.client_tree.insert("", "end", 
@@ -176,6 +197,7 @@ class ClientManagerApp:
                                              telefono,
                                              correo,
                                              grupo,
+                                             tipo_cliente,
                                              descuento),
                                       tags=(str(client.get('id_grupo', '')),))
     
@@ -243,20 +265,33 @@ class ClientManagerApp:
         email_error_label = tk.Label(form_frame, text="", fg="#d32f2f", font=("Arial", 9))
         email_error_label.pack(fill="x")
         
-        # Group field (OPTIONAL)
+        # Group field (REQUIRED)
         group_frame = tk.Frame(form_frame)
         group_frame.pack(fill="x", pady=5)
-        tk.Label(group_frame, text="Grupo:", width=15, anchor="w").pack(side="left")
+        tk.Label(group_frame, text="Grupo: *", width=15, anchor="w", fg="#d32f2f").pack(side="left")
         
         # Combobox for groups
         group_values = [(g['id_grupo'], g['clave_grupo']) for g in self.groups]
         group_names = [g[1] for g in group_values]
-        group_names.insert(0, "--- Sin grupo ---")
         
         group_var = tk.StringVar()
         group_combo = ttk.Combobox(group_frame, textvariable=group_var, values=group_names, state="readonly")
         group_combo.pack(side="left", fill="x", expand=True)
         group_combo.current(0)
+        
+        # Client Type field (REQUIRED)
+        type_frame = tk.Frame(form_frame)
+        type_frame.pack(fill="x", pady=5)
+        tk.Label(type_frame, text="Tipo Cliente: *", width=15, anchor="w", fg="#d32f2f").pack(side="left")
+        
+        # Combobox for client types
+        type_values = [(t['id_tipo_cliente'], t['nombre_tipo'], t['descuento']) for t in self.client_types]
+        type_names = [t[1] for t in type_values]
+        
+        type_var = tk.StringVar()
+        type_combo = ttk.Combobox(type_frame, textvariable=type_var, values=type_names, state="readonly")
+        type_combo.pack(side="left", fill="x", expand=True)
+        type_combo.current(0)
         
         # Required fields note
         required_note = tk.Label(form_frame, text="* Campos obligatorios", font=("Arial", 9), fg="#666")
@@ -297,6 +332,7 @@ class ClientManagerApp:
             phone = phone_entry.get().strip() or None
             email = email_entry.get().strip() or None
             group_name = group_var.get().strip()
+            type_name = type_var.get().strip()
             
             is_valid = True
             
@@ -311,7 +347,7 @@ class ClientManagerApp:
                 is_valid = False
             
             if is_valid:
-                self.save_client(popup, name, phone, email, group_name, group_values, None)
+                self.save_client(popup, name, phone, email, group_name, group_values, type_name, type_values, None)
         
         tk.Button(button_frame, text="Guardar", 
                  command=save_client_with_validation, 
@@ -335,7 +371,7 @@ class ClientManagerApp:
         
         # Get client details from database
         self.cursor.execute("""
-            SELECT c.id_cliente, c.nombre_cliente, c.telefono, c.correo, c.id_grupo
+            SELECT c.id_cliente, c.nombre_cliente, c.telefono, c.correo, c.id_grupo, c.id_tipo_cliente
             FROM cliente c
             WHERE c.id_cliente = %s
         """, (client_id,))
@@ -403,15 +439,14 @@ class ClientManagerApp:
         email_error_label = tk.Label(form_frame, text="", fg="#d32f2f", font=("Arial", 9))
         email_error_label.pack(fill="x")
         
-        # Group field (OPTIONAL)
+        # Group field (REQUIRED)
         group_frame = tk.Frame(form_frame)
         group_frame.pack(fill="x", pady=5)
-        tk.Label(group_frame, text="Grupo:", width=15, anchor="w").pack(side="left")
+        tk.Label(group_frame, text="Grupo: *", width=15, anchor="w", fg="#d32f2f").pack(side="left")
         
         # Combobox for groups
         group_values = [(g['id_grupo'], g['clave_grupo']) for g in self.groups]
         group_names = [g[1] for g in group_values]
-        group_names.insert(0, "--- Sin grupo ---")
         
         group_var = tk.StringVar()
         group_combo = ttk.Combobox(group_frame, textvariable=group_var, values=group_names, state="readonly")
@@ -421,10 +456,30 @@ class ClientManagerApp:
         if client["id_grupo"]:
             for i, (id_grupo, _) in enumerate(group_values):
                 if id_grupo == client["id_grupo"]:
-                    group_combo.current(i + 1)  # +1 because of "--- Sin grupo ---"
+                    group_combo.current(i)
                     break
-        else:
-            group_combo.current(0)
+        
+        # Client Type field (REQUIRED)
+        type_frame = tk.Frame(form_frame)
+        type_frame.pack(fill="x", pady=5)
+        tk.Label(type_frame, text="Tipo Cliente: *", width=15, anchor="w", fg="#d32f2f").pack(side="left")
+
+        # Combobox for client types
+        type_values = [(t['id_tipo_cliente'], t['nombre_tipo'], t['descuento']) for t in self.client_types]
+        type_names = [f"{t[1]} ({t[2]}%)" for t in type_values]
+        
+        type_var = tk.StringVar()
+        type_combo = ttk.Combobox(type_frame, textvariable=type_var, values=type_names, state="readonly")
+        type_combo.pack(side="left", fill="x", expand=True)
+        
+        # Set current type
+        if client["id_tipo_cliente"]:
+            for i, (id_tipo, nombre, descuento) in enumerate(type_values):
+                if id_tipo == client["id_tipo_cliente"]:
+                    type_combo.current(i)
+                    # Mostrar el tipo actual con su descuento
+                    type_var.set(f"{nombre} ({descuento}%)")
+                    break
         
         # Required fields note
         required_note = tk.Label(form_frame, text="* Campos obligatorios", font=("Arial", 9), fg="#666")
@@ -465,6 +520,7 @@ class ClientManagerApp:
             phone = phone_entry.get().strip() or None
             email = email_entry.get().strip() or None
             group_name = group_var.get().strip()
+            type_name = type_var.get().strip()
             
             is_valid = True
             
@@ -479,8 +535,8 @@ class ClientManagerApp:
                 is_valid = False
             
             if is_valid:
-                self.save_client(popup, name, phone, email, group_name, group_values, client_id)
-        
+                self.save_client(popup, name, phone, email, group_name, group_values, type_name, type_values, client_id)
+
         tk.Button(button_frame, text="Guardar Cambios", 
                  command=save_client_with_validation, 
                  bg="#4CAF50", fg="white", padx=10, pady=5).pack(side="left", padx=10)
@@ -489,30 +545,36 @@ class ClientManagerApp:
                  command=popup.destroy, 
                  bg="#f44336", fg="white", padx=10, pady=5).pack(side="left", padx=10)
     
-    def save_client(self, popup, name, phone, email, group_name, group_values, client_id=None):
+    def save_client(self, popup, name, phone, email, group_name, group_values, type_name, type_values, client_id=None):
         """Save client to database (add new or update existing)"""
         # Get group_id from selected group_name
         group_id = None
-        if group_name != "--- Sin grupo ---":
-            for id_grupo, nombre in group_values:
-                if nombre == group_name:
-                    group_id = id_grupo
-                    break
+        for id_grupo, nombre in group_values:
+            if nombre == group_name:
+                group_id = id_grupo
+                break
+                
+        # Get type_id from selected type_name
+        type_id = None
+        for id_tipo, nombre in type_values:
+            if nombre == type_name:
+                type_id = id_tipo
+                break
                 
         try:
             if client_id:  # Update existing client
                 self.cursor.execute("""
                     UPDATE cliente 
-                    SET nombre_cliente = %s, telefono = %s, correo = %s, id_grupo = %s
+                    SET nombre_cliente = %s, telefono = %s, correo = %s, id_grupo = %s, id_tipo_cliente = %s
                     WHERE id_cliente = %s
-                """, (name, phone, email, group_id, client_id))
+                """, (name, phone, email, group_id, type_id, client_id))
                 
                 action = "actualizado"
             else:  # Add new client
                 self.cursor.execute("""
-                    INSERT INTO cliente (nombre_cliente, telefono, correo, id_grupo)
-                    VALUES (%s, %s, %s, %s)
-                """, (name, phone, email, group_id))
+                    INSERT INTO cliente (nombre_cliente, telefono, correo, id_grupo, id_tipo_cliente)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (name, phone, email, group_id, type_id))
                 
                 action = "agregado"
             
@@ -525,7 +587,7 @@ class ClientManagerApp:
         except Exception as e:
             self.conn.rollback()
             messagebox.showerror("Error", f"Error al guardar cliente: {str(e)}")
-    
+
     def delete_client(self):
         """Delete selected client"""
         # Get selected client
@@ -572,7 +634,7 @@ class ClientManagerApp:
             
             # Finally delete client
             self.cursor.execute("DELETE FROM cliente WHERE id_cliente = %s", (client_id,))
-            
+
             # Commit changes
             self.conn.commit()
             self.conn.autocommit = True
@@ -619,8 +681,8 @@ class ClientManagerApp:
         
         # Load groups into listbox
         for group in self.groups:
-            group_listbox.insert(tk.END, f"{group['clave_grupo']} (Descuento: {group['descuento']}%)")
-        
+            group_listbox.insert(tk.END, group['clave_grupo'])
+
         # Buttons frame
         button_frame = tk.Frame(popup)
         button_frame.pack(fill="x", pady=10, padx=20)
@@ -641,22 +703,71 @@ class ClientManagerApp:
                  command=popup.destroy, 
                  bg="#607D8B", fg="white", padx=10, pady=5).pack(side="right", padx=5)
     
+    def manage_client_types(self):
+        """Manage client types"""
+        # Create popup
+        popup = tk.Toplevel(self.root)
+        popup.title("Administrar Tipos de Cliente")
+        popup.geometry("400x400")
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        # Center popup
+        popup.update_idletasks()
+        width = popup.winfo_width()
+        height = popup.winfo_height()
+        x = (popup.winfo_screenwidth() // 2) - (width // 2)
+        y = (popup.winfo_screenheight() // 2) - (height // 2)
+        popup.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+        
+        # Title
+        tk.Label(popup, text="Tipos de Cliente", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        # Listbox for types
+        frame = tk.Frame(popup)
+        frame.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        scrollbar = tk.Scrollbar(frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        type_listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Arial", 12))
+        type_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=type_listbox.yview)
+        
+        # Load types into listbox
+        for client_type in self.client_types:
+            type_listbox.insert(tk.END, f"{client_type['nombre_tipo']} (Descuento: {client_type['descuento']}%)")
+        
+        # Buttons frame
+        button_frame = tk.Frame(popup)
+        button_frame.pack(fill="x", pady=10, padx=20)
+        
+        tk.Button(button_frame, text="Agregar Tipo", 
+                 command=lambda: self.add_client_type(popup, type_listbox), 
+                 bg="#4CAF50", fg="white", padx=10, pady=5).pack(side="left", padx=5)
+                 
+        tk.Button(button_frame, text="Editar Tipo", 
+                 command=lambda: self.edit_client_type(popup, type_listbox), 
+                 bg="#FFA500", fg="white", padx=10, pady=5).pack(side="left", padx=5)
+                 
+        tk.Button(button_frame, text="Eliminar Tipo", 
+                 command=lambda: self.delete_client_type(popup, type_listbox), 
+                 bg="#f44336", fg="white", padx=10, pady=5).pack(side="left", padx=5)
+                 
+        tk.Button(button_frame, text="Cerrar", 
+                 command=popup.destroy, 
+                 bg="#607D8B", fg="white", padx=10, pady=5).pack(side="right", padx=5)
+
     def add_group(self, parent_popup, group_listbox):
         """Add a new group"""
-        # Ask for new group name and discount
+        # Ask for new group name
         group_name = simpledialog.askstring("Nuevo Grupo", "Clave del nuevo grupo:", parent=parent_popup)
         if not group_name or not group_name.strip():
             return
             
-        discount = simpledialog.askfloat("Descuento", "Porcentaje de descuento (ej. 10.5):", 
-                                        parent=parent_popup, minvalue=0, maxvalue=100)
-        if discount is None:  # User cancelled
-            return
-            
         try:
             # Insert new group
-            self.cursor.execute("INSERT INTO grupo (clave_grupo, descuento) VALUES (%s, %s)", 
-                             (group_name, discount))
+            self.cursor.execute("INSERT INTO grupo (clave_grupo) VALUES (%s)", (group_name,))
             self.conn.commit()
             
             # Reload groups
@@ -665,14 +776,14 @@ class ClientManagerApp:
             # Update listbox
             group_listbox.delete(0, tk.END)
             for group in self.groups:
-                group_listbox.insert(tk.END, f"{group['clave_grupo']} (Descuento: {group['descuento']}%)")
+                group_listbox.insert(tk.END, group['clave_grupo'])
                 
             self.status_var.set(f"Grupo '{group_name}' agregado correctamente")
                 
         except Exception as e:
             self.conn.rollback()
             messagebox.showerror("Error", f"Error al agregar grupo: {str(e)}")
-    
+
     def edit_group(self, parent_popup, group_listbox):
         """Edit selected group"""
         # Get selected group
@@ -685,26 +796,20 @@ class ClientManagerApp:
         selected_index = selection[0]
         selected_group = self.groups[selected_index]
         
-        # Ask for new name and discount
+        # Ask for new name
         new_name = simpledialog.askstring("Editar Grupo", "Nueva clave:", 
                                        initialvalue=selected_group['clave_grupo'], 
                                        parent=parent_popup)
         if not new_name or not new_name.strip():
             return
             
-        new_discount = simpledialog.askfloat("Editar Descuento", "Nuevo porcentaje de descuento:", 
-                                           initialvalue=float(selected_group['descuento']),
-                                           parent=parent_popup, minvalue=0, maxvalue=100)
-        if new_discount is None:  # User cancelled
-            return
-            
         try:
             # Update group
             self.cursor.execute("""
                 UPDATE grupo 
-                SET clave_grupo = %s, descuento = %s
+                SET clave_grupo = %s
                 WHERE id_grupo = %s
-            """, (new_name, new_discount, selected_group['id_grupo']))
+            """, (new_name, selected_group['id_grupo']))
             self.conn.commit()
             
             # Reload groups
@@ -713,14 +818,14 @@ class ClientManagerApp:
             # Update listbox
             group_listbox.delete(0, tk.END)
             for group in self.groups:
-                group_listbox.insert(tk.END, f"{group['clave_grupo']} (Descuento: {group['descuento']}%)")
+                group_listbox.insert(tk.END, group['clave_grupo'])
                 
             self.status_var.set(f"Grupo actualizado correctamente")
             
         except Exception as e:
             self.conn.rollback()
             messagebox.showerror("Error", f"Error al actualizar grupo: {str(e)}")
-    
+
     def delete_group(self, parent_popup, group_listbox):
         """Delete selected group"""
         # Get selected group
@@ -768,7 +873,134 @@ class ClientManagerApp:
         except Exception as e:
             self.conn.rollback()
             messagebox.showerror("Error", f"Error al eliminar grupo: {str(e)}")
+    def add_client_type(self, parent_popup, type_listbox):
+        """Add a new client type"""
+        # Ask for new type name and discount
+        type_name = simpledialog.askstring("Nuevo Tipo", "Nombre del nuevo tipo:", parent=parent_popup)
+        if not type_name or not type_name.strip():
+            return
+            
+        discount = simpledialog.askfloat("Descuento", "Porcentaje de descuento (ej. 10.5):", 
+                                        parent=parent_popup, minvalue=0, maxvalue=100)
+        if discount is None:  # User cancelled
+            return
+            
+        try:
+            # Insert new type
+            self.cursor.execute("INSERT INTO tipo_cliente (nombre_tipo, descuento) VALUES (%s, %s)", 
+                             (type_name, discount))
+            self.conn.commit()
+            
+            # Reload types
+            self.load_client_types()
+            
+            # Update listbox
+            type_listbox.delete(0, tk.END)
+            for client_type in self.client_types:
+                type_listbox.insert(tk.END, f"{client_type['nombre_tipo']} (Descuento: {client_type['descuento']}%)")
+                
+            self.status_var.set(f"Tipo '{type_name}' agregado correctamente")
+                
+        except Exception as e:
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al agregar tipo: {str(e)}")
     
+    def edit_client_type(self, parent_popup, type_listbox):
+        """Edit selected client type"""
+        # Get selected type
+        selection = type_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Advertencia", "Por favor selecciona un tipo para editar", parent=parent_popup)
+            return
+            
+        # Get type info
+        selected_index = selection[0]
+        selected_type = self.client_types[selected_index]
+        
+        # Ask for new name and discount
+        new_name = simpledialog.askstring("Editar Tipo", "Nuevo nombre:", 
+                                       initialvalue=selected_type['nombre_tipo'], 
+                                       parent=parent_popup)
+        if not new_name or not new_name.strip():
+            return
+            
+        new_discount = simpledialog.askfloat("Editar Descuento", "Nuevo porcentaje de descuento:", 
+                                           initialvalue=float(selected_type['descuento']),
+                                           parent=parent_popup, minvalue=0, maxvalue=100)
+        if new_discount is None:  # User cancelled
+            return
+            
+        try:
+            # Update type
+            self.cursor.execute("""
+                UPDATE tipo_cliente 
+                SET nombre_tipo = %s, descuento = %s
+                WHERE id_tipo_cliente = %s
+            """, (new_name, new_discount, selected_type['id_tipo_cliente']))
+            self.conn.commit()
+            
+            # Reload types
+            self.load_client_types()
+            
+            # Update listbox
+            type_listbox.delete(0, tk.END)
+            for client_type in self.client_types:
+                type_listbox.insert(tk.END, f"{client_type['nombre_tipo']} (Descuento: {client_type['descuento']}%)")
+                
+            self.status_var.set(f"Tipo actualizado correctamente")
+            
+        except Exception as e:
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al actualizar tipo: {str(e)}")
+    
+    def delete_client_type(self, parent_popup, type_listbox):
+        """Delete selected client type"""
+        # Get selected type
+        selection = type_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Advertencia", "Por favor selecciona un tipo para eliminar", parent=parent_popup)
+            return
+            
+        # Get type info
+        selected_index = selection[0]
+        selected_type = self.client_types[selected_index]
+        
+        # Check if type is in use
+        self.cursor.execute("SELECT COUNT(*) as count FROM cliente WHERE id_tipo_cliente = %s", (selected_type['id_tipo_cliente'],))
+        clients_count = self.cursor.fetchone()['count']
+        
+        if clients_count > 0:
+            messagebox.showerror("Error", 
+                              f"No se puede eliminar este tipo porque está en uso por {clients_count} clientes.\n"
+                              f"Debes reasignar o eliminar estos clientes primero.", 
+                              parent=parent_popup)
+            return
+            
+        # Confirm deletion
+        if not messagebox.askyesno("Confirmar Eliminación", 
+                                 f"¿Estás seguro de eliminar el tipo '{selected_type['nombre_tipo']}'?",
+                                 parent=parent_popup):
+            return
+            
+        try:
+            # Delete type
+            self.cursor.execute("DELETE FROM tipo_cliente WHERE id_tipo_cliente = %s", (selected_type['id_tipo_cliente'],))
+            self.conn.commit()
+            
+            # Reload types
+            self.load_client_types()
+            
+            # Update listbox
+            type_listbox.delete(0, tk.END)
+            for client_type in self.client_types:
+                type_listbox.insert(tk.END, f"{client_type['nombre_tipo']} (Descuento: {client_type['descuento']}%)")
+                
+            self.status_var.set(f"Tipo eliminado correctamente")
+            
+        except Exception as e:
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al eliminar tipo: {str(e)}")
+
     def on_closing(self):
         """Clean up and close connection when closing the app"""
         try:
