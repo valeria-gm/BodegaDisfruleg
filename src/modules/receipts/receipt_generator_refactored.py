@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 from decimal import Decimal
 from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any, Callable
 
 # Import components
 from .components.database_manager import DatabaseManager
@@ -18,21 +19,41 @@ from .models.receipt_models import ProductData, ClientData, CartItem
 class ReciboAppMejorado:
     """Refactored Receipt Application with modular components"""
     
-    def __init__(self, root: tk.Tk, user_data):
+    def __init__(self, root: tk.Tk, user_data,
+                 db_manager: DatabaseManager,
+                 pdf_generator: PDFGenerator,
+                 cart_manager:CartManager,
+                 product_manager: ProductManager,
+                 on_state_change: Optional[Callable] = None):
+        print(f"[DEBUG] ===== CREANDO NUEVA INSTANCIA DE ReciboAppMejorado =====\n")
+        print(f"[DEBUG] ReciboAppMejorado instance id: {id(self)}")
+        
         self.root = root
-        self.root.title("Generador de Recibos - Mejorado")
-        self.root.geometry("1000x700")
+        self.root.title("Generador de Recibos")
+        self.root.geometry("1000x1000")
         
         # Initialize user data
         self.user_data = user_data if isinstance(user_data, dict) else json.loads(user_data)
         self.es_admin = (self.user_data['rol'] == 'admin')
         
         # Initialize components
-        self.db_manager = DatabaseManager()
-        self.pdf_generator = PDFGenerator()
+        self.db_manager = db_manager
+        self.pdf_generator = pdf_generator
+        self.cart_manager = cart_manager
+        self.product_manager = product_manager
         self.auth_manager = AuthenticationManager(self)
         self.ui_builder = UIBuilder(root)
-        self.cart_manager = CartManager()
+        self.on_state_change = on_state_change # <-- NUEVA LÍNEA
+        
+        print(f"[DEBUG] Callback on_state_change recibido:")
+        if on_state_change:
+            print(f"[DEBUG]   - Es una función válida: {callable(on_state_change)}")
+            print(f"[DEBUG]   - Callback function object id: {id(on_state_change)}")
+        else:
+            print(f"[DEBUG]   - Es None: {on_state_change is None}")
+            
+        print(f"[DEBUG] ===== INSTANCIA CREADA EXITOSAMENTE =====\n")
+
         
         # Initialize variables
         self.grupo_seleccionado = tk.StringVar()
@@ -47,7 +68,6 @@ class ReciboAppMejorado:
         self.clientes: List[ClientData] = []
         self.current_group: Optional[Dict[str, Any]] = None
         self.current_client: Optional[ClientData] = None
-        self.product_manager: Optional[ProductManager] = None
         
         # UI components
         self.grupo_combo = None
@@ -62,14 +82,53 @@ class ReciboAppMejorado:
         self._load_data()
         self._create_interface()
         self._setup_initial_status()
+
+    def _notify_state_change(self):
+        """Helper method to call the callback if it exists."""
+        print(f"[DEBUG] ===== NOTIFICANDO CAMBIO DE ESTADO =====\n")
+        print(f"[DEBUG] ReciboAppMejorado instance id: {id(self)} está notificando cambio de estado")
+        
+        if self.on_state_change:
+            print(f"[DEBUG]   - Callback es válido, llamando función...")
+            print(f"[DEBUG]   - Callback function object id: {id(self.on_state_change)}")
+            self.on_state_change()
+            print(f"[DEBUG]   - Callback ejecutado exitosamente")
+        else:
+            print(f"[DEBUG]   - ERROR: No hay callback configurado (on_state_change es None)")
+            
+        print(f"[DEBUG] ===== NOTIFICACIÓN COMPLETADA =====\n")
+
+    def on_client_change(self, event=None):
+        """Handle client selection change"""
+        # ... (toda tu lógica existente en on_client_change) ...
+        cliente_display = self.cliente_seleccionado.get()
+        cliente_nombre = cliente_display.split(' (')[0] if ' (' in cliente_display else cliente_display
+        self.current_client = next((c for c in self.clientes if c.nombre_cliente == cliente_nombre), None)
+
+        if self.current_client:
+            self.product_manager.update_client_data(self.current_client)
+            self._update_products_display()
+            self.cart_manager.clear_cart()
+            self._update_cart_display() # Esto ya notificará el cambio de estado del carrito
+            self._enable_section_selection()
+            
+            client_type = self.db_manager.get_client_type_name(self.current_client.id_tipo_cliente)
+            self.ui_builder.update_client_type_display(
+                self.cliente_combo, client_type, float(self.current_client.descuento)
+            )
+            
+            self.status_var.set(
+                f"Cliente: {cliente_nombre} | Descuento: {float(self.current_client.descuento)}% | "
+                f"{len(self.product_manager.all_products)} productos"
+            )
+            # CAMBIO 3: Notificar explícitamente que el cliente ha cambiado
+            self._notify_state_change()
     
     def _load_data(self):
         """Load initial data from database"""
         try:
             self.grupos = self.db_manager.get_groups()
             # Don't load clients initially - they'll be loaded when group is selected
-            productos = self.db_manager.get_products()
-            self.product_manager = ProductManager(productos, db_manager=self.db_manager)
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar datos: {str(e)}")
     
@@ -448,6 +507,8 @@ class ReciboAppMejorado:
     
     def _update_cart_display(self):
         """Update cart display"""
+        print(f"[DEBUG] _update_cart_display llamado en instancia {id(self)}")
+        
         if self.cart_manager.sectioning_enabled:
             # Use sectioned display
             sectioned_data = self.cart_manager.get_sectioned_cart_data()
@@ -464,6 +525,10 @@ class ReciboAppMejorado:
         # Update status
         count = self.cart_manager.get_cart_count()
         self.status_var.set(f"Carrito: {count} productos | Total: ${float(total):.2f}")
+        
+        print(f"[DEBUG] Cart actualizado: {count} productos, total: ${float(total):.2f}")
+        print(f"[DEBUG] Notificando cambio de estado desde _update_cart_display...")
+        self._notify_state_change()
     
     def show_preview(self):
         """Show receipt preview"""
