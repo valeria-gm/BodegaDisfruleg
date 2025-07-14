@@ -93,33 +93,49 @@ class TabbedReceiptAppConsolidated:
     def _create_new_tab(self) -> Optional[str]:
         """Crea y configura una nueva pestaña y su sesión asociada."""
         try:
+            print(f"[DEBUG] ===== INICIANDO CREACIÓN DE NUEVA PESTAÑA =====\n")
+            
             tab_session = TabSessionFactory.create_session(self.mode, self.user_data)
             self.tab_counter += 1
+            
+            print(f"[DEBUG] Tab Session creada:")
+            print(f"[DEBUG]   - tab_id: {tab_session.tab_id}")
+            print(f"[DEBUG]   - tab_session object id: {id(tab_session)}")
             
             tab_frame = ttk.Frame(self.notebook)
             tab_session.tab_frame = tab_frame
             
             # Crear una función de callback que captura la sesión actual.
             # Esto es crucial para que cada pestaña notifique a su propia sesión.
-            def state_change_callback():
+            def state_change_callback_for_this_tab():
+                print(f"[DEBUG] ===== CALLBACK CREADO PARA TAB_ID: {tab_session.tab_id} =====\n")
+                print(f"[DEBUG] Callback creado para tab_session object id: {id(tab_session)}")
                 self._handle_state_change(tab_session)
 
+            print(f"[DEBUG] Callback creado para tab_id: {tab_session.tab_id}")
+            print(f"[DEBUG] Callback function object id: {id(state_change_callback_for_this_tab)}")
+            
             app_instance = AppFactory.create_app_for_mode(
                 mode=self.mode,
                 root_or_frame=tab_frame,
                 user_data=tab_session.user_data,
                 tab_id=tab_session.tab_id,
                 main_window=self.root,
-                on_state_change=state_change_callback
+                on_state_change=state_change_callback_for_this_tab
             )
             
             tab_session.app_instance = app_instance
             self.tabs[tab_session.tab_id] = tab_session
             
+            print(f"[DEBUG] Tab guardada en diccionario con clave: {tab_session.tab_id}")
+            print(f"[DEBUG] Diccionario de tabs ahora contiene: {list(self.tabs.keys())}")
+            
             self.notebook.add(tab_frame, text=tab_session.get_tab_title())
             self.notebook.select(tab_frame)
             
             self._update_tab_info()
+            
+            print(f"[DEBUG] ===== PESTAÑA CREADA EXITOSAMENTE =====\n")
             
             return tab_session.tab_id
             
@@ -134,39 +150,77 @@ class TabbedReceiptAppConsolidated:
         Callback que se ejecuta cuando el estado de una aplicación de recibos cambia.
         Actualiza la sesión y la UI del contenedor principal.
         """
+        print(f"[DEBUG] ===== CALLBACK DISPARADO =====\n")
+        print(f"[DEBUG] Callback disparado para tab_session:")
+        print(f"[DEBUG]   - tab_id: {tab_session.tab_id}")
+        print(f"[DEBUG]   - tab_session object id: {id(tab_session)}")
+        
         app = tab_session.app_instance
         if not app:
+            print(f"[DEBUG] ERROR: No hay app_instance en tab_session {tab_session.tab_id}")
             return
 
         client_name = app.current_client.nombre_cliente if app.current_client else ""
         cart_count = app.cart_manager.get_cart_count() if app.cart_manager else 0
         
+        print(f"[DEBUG] Datos obtenidos de la app:")
+        print(f"[DEBUG]   - client_name: '{client_name}'")
+        print(f"[DEBUG]   - cart_count: {cart_count}")
+        print(f"[DEBUG]   - app_instance object id: {id(app)}")
+        
         tab_session.update_status(client_name, cart_count)
         
+        print(f"[DEBUG] Actualizando título para tab_id: {tab_session.tab_id}")
         self._update_tab_title(tab_session.tab_id)
+        
         if tab_session.tab_id == self.current_tab_id:
+            print(f"[DEBUG] Esta es la pestaña actual, actualizando info")
             self._update_tab_info()
+        else:
+            print(f"[DEBUG] Esta NO es la pestaña actual (current: {self.current_tab_id})")
+            
+        print(f"[DEBUG] ===== CALLBACK COMPLETADO =====\n")
 
     def _update_tab_title(self, tab_id: str):
         """Actualiza el texto del título de una pestaña específica."""
+        print(f"[DEBUG] ===== ACTUALIZANDO TÍTULO DE PESTAÑA =====\n")
+        print(f"[DEBUG] Actualizando título para tab_id: {tab_id}")
+        
         if tab_id not in self.tabs:
+            print(f"[DEBUG] ERROR: tab_id {tab_id} no encontrado en diccionario")
+            print(f"[DEBUG] Tabs disponibles: {list(self.tabs.keys())}")
             return
         
         try:
             tab_session = self.tabs[tab_id]
             tab_frame = tab_session.tab_frame
             
+            print(f"[DEBUG] Tab session encontrada:")
+            print(f"[DEBUG]   - tab_id: {tab_session.tab_id}")
+            print(f"[DEBUG]   - tab_session object id: {id(tab_session)}")
+            
             if tab_frame and tab_frame.winfo_exists():
                 title = tab_session.get_tab_title()
                 if tab_session.has_data():
                     title += " •"  # Indicador de cambios no guardados
                 
+                print(f"[DEBUG] Nuevo título calculado: '{title}'")
+                
                 for i, tab_widget_path in enumerate(self.notebook.tabs()):
                     if str(tab_frame) == tab_widget_path:
+                        print(f"[DEBUG] Actualizando pestaña en posición {i} con título: '{title}'")
                         self.notebook.tab(i, text=title)
                         break
+                else:
+                    print(f"[DEBUG] ERROR: No se encontró el tab_frame en el notebook")
+            else:
+                print(f"[DEBUG] ERROR: tab_frame no existe o no es válido")
+                
         except Exception as e:
+            print(f"[DEBUG] ERROR en _update_tab_title: {e}")
             print(f"Advertencia: No se pudo actualizar el título de la pestaña: {e}")
+        
+        print(f"[DEBUG] ===== ACTUALIZACIÓN DE TÍTULO COMPLETADA =====\n")
 
     def _close_current_tab(self):
         """Cierra la pestaña actualmente seleccionada."""

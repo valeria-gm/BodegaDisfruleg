@@ -25,6 +25,9 @@ class ReciboAppMejorado:
                  cart_manager:CartManager,
                  product_manager: ProductManager,
                  on_state_change: Optional[Callable] = None):
+        print(f"[DEBUG] ===== CREANDO NUEVA INSTANCIA DE ReciboAppMejorado =====\n")
+        print(f"[DEBUG] ReciboAppMejorado instance id: {id(self)}")
+        
         self.root = root
         self.root.title("Generador de Recibos")
         self.root.geometry("1000x1000")
@@ -41,6 +44,15 @@ class ReciboAppMejorado:
         self.auth_manager = AuthenticationManager(self)
         self.ui_builder = UIBuilder(root)
         self.on_state_change = on_state_change # <-- NUEVA LÍNEA
+        
+        print(f"[DEBUG] Callback on_state_change recibido:")
+        if on_state_change:
+            print(f"[DEBUG]   - Es una función válida: {callable(on_state_change)}")
+            print(f"[DEBUG]   - Callback function object id: {id(on_state_change)}")
+        else:
+            print(f"[DEBUG]   - Es None: {on_state_change is None}")
+            
+        print(f"[DEBUG] ===== INSTANCIA CREADA EXITOSAMENTE =====\n")
 
         
         # Initialize variables
@@ -73,8 +85,18 @@ class ReciboAppMejorado:
 
     def _notify_state_change(self):
         """Helper method to call the callback if it exists."""
+        print(f"[DEBUG] ===== NOTIFICANDO CAMBIO DE ESTADO =====\n")
+        print(f"[DEBUG] ReciboAppMejorado instance id: {id(self)} está notificando cambio de estado")
+        
         if self.on_state_change:
+            print(f"[DEBUG]   - Callback es válido, llamando función...")
+            print(f"[DEBUG]   - Callback function object id: {id(self.on_state_change)}")
             self.on_state_change()
+            print(f"[DEBUG]   - Callback ejecutado exitosamente")
+        else:
+            print(f"[DEBUG]   - ERROR: No hay callback configurado (on_state_change es None)")
+            
+        print(f"[DEBUG] ===== NOTIFICACIÓN COMPLETADA =====\n")
 
     def on_client_change(self, event=None):
         """Handle client selection change"""
@@ -485,6 +507,8 @@ class ReciboAppMejorado:
     
     def _update_cart_display(self):
         """Update cart display"""
+        print(f"[DEBUG] _update_cart_display llamado en instancia {id(self)}")
+        
         if self.cart_manager.sectioning_enabled:
             # Use sectioned display
             sectioned_data = self.cart_manager.get_sectioned_cart_data()
@@ -501,6 +525,10 @@ class ReciboAppMejorado:
         # Update status
         count = self.cart_manager.get_cart_count()
         self.status_var.set(f"Carrito: {count} productos | Total: ${float(total):.2f}")
+        
+        print(f"[DEBUG] Cart actualizado: {count} productos, total: ${float(total):.2f}")
+        print(f"[DEBUG] Notificando cambio de estado desde _update_cart_display...")
+        self._notify_state_change()
     
     def show_preview(self):
         """Show receipt preview"""
