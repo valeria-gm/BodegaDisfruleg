@@ -6,6 +6,7 @@ from tkinter import ttk, messagebox
 from src.modules.receipts.components import database
 from src.modules.receipts.components import generador_pdf as generador_pdf
 from src.modules.receipts.components.carrito_module import CarritoConSecciones, DialogoSeccion
+from src.modules.receipts.components import generador_excel
 
 class ReciboAppMejorado:
     def __init__(self, parent=None, user_data=None):
@@ -169,6 +170,14 @@ class ReciboAppMejorado:
             command=lambda w=widgets: self._limpiar_carrito(w)
         )
         widgets['btn_limpiar'].pack(side="left", padx=(0, 10))
+
+        # *** NUEVO BOTÓN DE EXCEL ***
+        widgets['btn_generar_excel'] = ttk.Button(
+        frame_botones, 
+        text="📊 Generar Excel",
+        command=lambda w=widgets: self._generar_excel(w)
+        )
+        widgets['btn_generar_excel'].pack(side="left", padx=(0, 10))
         
         widgets['btn_procesar_venta'] = ttk.Button(
             frame_botones, 
@@ -300,6 +309,63 @@ class ReciboAppMejorado:
         
         widgets['lbl_total_valor'].config(text=f"${total:.2f}")
         widgets['lbl_contador'].config(text=f"{count} producto{'s' if count != 1 else ''}")
+    
+    def _generar_excel(self, widgets):
+            """Genera un archivo Excel con el contenido del carrito"""
+            nombre_cliente = widgets['combo_clientes'].get()
+            if not nombre_cliente:
+                messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
+                return
+
+            carrito = widgets['carrito_obj']
+            if not carrito.items:
+                messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
+                return
+            
+            total = carrito.obtener_total()
+            
+            if not messagebox.askyesno("Generar Excel", 
+                                    f"¿Generar archivo Excel para '{nombre_cliente}'?\n\n"
+                                    f"Total: ${total:.2f}"):
+                return
+
+            try:
+                # Decidir qué tipo de Excel generar
+                if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                    # Generar Excel con secciones
+                    items_por_seccion = carrito.obtener_items_por_seccion()
+                    
+                    # Verificar que realmente hay múltiples secciones con datos
+                    secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
+                    
+                    if len(secciones_con_datos) > 1:
+                        # Generar Excel con secciones
+                        ruta_excel = generador_excel.crear_excel_con_secciones(
+                            nombre_cliente, secciones_con_datos, total
+                        )
+                    else:
+                        # Solo una sección con datos, usar formato simple
+                        items_carrito = carrito.obtener_items()
+                        ruta_excel = generador_excel.crear_excel_simple(
+                            nombre_cliente, items_carrito
+                        )
+                else:
+                    # Generar Excel simple
+                    items_carrito = carrito.obtener_items()
+                    ruta_excel = generador_excel.crear_excel_simple(
+                        nombre_cliente, items_carrito
+                    )
+                
+                if ruta_excel:
+                    messagebox.showinfo("Excel Generado", 
+                                    f"Archivo Excel generado exitosamente!\n\n"
+                                    f"Guardado en: {ruta_excel}")
+                else:
+                    messagebox.showerror("Error", "No se pudo generar el archivo Excel.")
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al generar Excel: {str(e)}")
+
 
     def _procesar_venta(self, widgets):
         """Procesa la venta y genera el recibo"""
