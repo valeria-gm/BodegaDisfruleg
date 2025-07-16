@@ -87,7 +87,7 @@ def crear_excel_simple(nombre_restaurante, items_carrito):
         total_general = 0.0
 
         for item in items_carrito:
-            cantidad_str, producto, precio_str, subtotal_str = item
+            cantidad_str, producto, precio_str, subtotal_str, unidad = item
             
             # Producto
             ws.cell(row=current_row, column=1, value=producto).font = data_font
@@ -251,7 +251,7 @@ def crear_excel_con_secciones(nombre_restaurante, items_por_seccion, total_gener
             # Items de la sección
             items_seccion = datos_seccion['items']
             for item in items_seccion:
-                cantidad_str, producto, precio_str, subtotal_str = item
+                cantidad_str, producto, precio_str, subtotal_str, unidad = item
                 
                 # Producto
                 ws.cell(row=current_row, column=1, value=producto).font = data_font

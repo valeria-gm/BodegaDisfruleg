@@ -105,7 +105,7 @@ def buscar_productos_por_grupo(id_grupo, texto_busqueda):
     try:
         # Unimos producto con precio_por_grupo para obtener el precio correcto
         query = """
-            SELECT p.nombre_producto, ppg.precio_base
+            SELECT p.nombre_producto, ppg.precio_base, p.unidad_producto
             FROM producto p
             JOIN precio_por_grupo ppg ON p.id_producto = ppg.id_producto
             WHERE ppg.id_grupo = %s AND p.nombre_producto LIKE %s AND p.stock > 0
@@ -132,7 +132,7 @@ def buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda):
     cursor = conn.cursor()
     try:
         query = """
-            SELECT p.nombre_producto, ppg.precio_base, p.es_especial
+            SELECT p.nombre_producto, ppg.precio_base, p.es_especial, p.unidad_producto
             FROM producto p
             JOIN precio_por_grupo ppg ON p.id_producto = ppg.id_producto
             WHERE ppg.id_grupo = %s AND p.nombre_producto LIKE %s AND p.stock > 0
@@ -177,7 +177,7 @@ def crear_factura_completa(id_cliente, items_carrito):
         """
         query_stock = "UPDATE producto SET stock = stock - %s WHERE nombre_producto = %s"
 
-        for cantidad, nombre_prod, precio_unit_str, subtotal_str in items_carrito:
+        for cantidad, nombre_prod, precio_unit_str, subtotal_str, unidad_producto in items_carrito:
             precio_unit = float(precio_unit_str.replace('$', ''))
             cantidad_float = float(cantidad)
             

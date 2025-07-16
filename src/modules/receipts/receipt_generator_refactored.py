@@ -207,14 +207,15 @@ class ReciboAppMejorado:
 
         # Modified: Retrieve all values, including the hidden 'es_especial' status.
         producto_info = widgets['tree_resultados'].item(seleccion, "values")
-        # Ensure that producto_info has at least 3 elements (nombre, precio, es_especial)
-        if len(producto_info) < 3:
+        # Ensure that producto_info has at least 3 elements (nombre, precio, es_especial, unidad)
+        if len(producto_info) < 4:
             messagebox.showerror("Error", "Información del producto incompleta.")
             return
 
         nombre_prod = producto_info[0]
         precio_str = producto_info[1]
         es_especial = bool(int(producto_info[2])) # Convert '0' or '1' string to boolean
+        unidad_producto = producto_info[3] 
 
         # Crear ventana de cantidad
         top = tk.Toplevel(self.root)
@@ -287,7 +288,7 @@ class ReciboAppMejorado:
             command=lambda: self._confirmar_agregar_al_carrito(
                 nombre_prod, entry_cantidad.get(), 
                 entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
-                combo_seccion, top, widgets
+                unidad_producto,combo_seccion, top, widgets
             )
         )
         btn_aceptar.pack(side="left", padx=5)
@@ -299,17 +300,17 @@ class ReciboAppMejorado:
                           lambda e: self._confirmar_agregar_al_carrito(
                               nombre_prod, entry_cantidad.get(), 
                               entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
-                              combo_seccion, top, widgets
+                              unidad_producto,combo_seccion, top, widgets
                           ))
         if es_especial and entry_precio_modificable:
             entry_precio_modificable.bind("<Return>", 
                                         lambda e: self._confirmar_agregar_al_carrito(
                                             nombre_prod, entry_cantidad.get(), 
                                             entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
-                                            combo_seccion, top, widgets
+                                            unidad_producto,combo_seccion, top, widgets
                                         ))
     
-    def _confirmar_agregar_al_carrito(self, nombre_prod, cantidad_str, precio_str_or_modified, combo_seccion, toplevel, widgets):
+    def _confirmar_agregar_al_carrito(self, nombre_prod, cantidad_str, precio_str_or_modified, unidad_producto, combo_seccion, toplevel, widgets):
         """Confirma y agrega el producto al carrito"""
         try:
             cantidad = float(cantidad_str)
@@ -342,7 +343,7 @@ class ReciboAppMejorado:
                     break
         
         # Agregar al carrito
-        carrito.agregar_item(nombre_prod, cantidad, precio_unit, seccion_id)
+        carrito.agregar_item(nombre_prod, cantidad, precio_unit, unidad_producto, seccion_id)
         toplevel.destroy()
 
     def _limpiar_carrito(self, widgets):
@@ -524,12 +525,12 @@ class ReciboAppMejorado:
         productos = database.buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda)
         
         if productos:
-            for nombre, precio, es_especial in productos:
+            for nombre, precio, es_especial, unidad in productos:
                 # Store es_especial as a hidden value in the treeview item
-                widgets['tree_resultados'].insert("", "end", values=(nombre, f"${precio:.2f}", es_especial))
+                widgets['tree_resultados'].insert("", "end", values=(nombre, f"${precio:.2f}", es_especial, unidad))
         else:
             # Mostrar mensaje si no hay resultados
-            widgets['tree_resultados'].insert("", "end", values=("No se encontraron productos", "", ""))
+            widgets['tree_resultados'].insert("", "end", values=("No se encontraron productos", "", "", ""))
 
     def run(self):
         """Run the application main loop"""

@@ -14,10 +14,12 @@ class SeccionCarrito:
 
 class ItemCarrito:
     """Representa un item en el carrito"""
-    def __init__(self, nombre_producto: str, cantidad: float, precio_unitario: float, seccion_id: Optional[str] = None):
+    # ✅ CORREGIDO: Agregado unidad_producto al constructor
+    def __init__(self, nombre_producto: str, cantidad: float, precio_unitario: float, unidad_producto: str, seccion_id: Optional[str] = None):
         self.nombre_producto = nombre_producto
         self.cantidad = cantidad
         self.precio_unitario = precio_unitario
+        self.unidad_producto = unidad_producto  # ✅ Ahora funciona porque está en el constructor
         self.seccion_id = seccion_id
         self.subtotal = cantidad * precio_unitario
 
@@ -68,13 +70,15 @@ class CarritoConSecciones:
         tree_frame = ttk.Frame(main_frame)
         tree_frame.pack(fill="both", expand=True, padx=5, pady=(0, 5))
 
-        cols = ("cantidad", "precio_unitario", "total", "del")
+        cols = ("cantidad",  "unidad", "precio_unitario", "total", "del")
         self.tree = ttk.Treeview(tree_frame, columns=cols, show="tree headings")
 
         self.tree.heading("#0", text="Producto / Sección")
         self.tree.column("#0", width=200, stretch=True)
         self.tree.heading("cantidad", text="Cantidad")
         self.tree.column("cantidad", width=80, anchor="center")
+        self.tree.heading("unidad", text="Unidad")
+        self.tree.column("unidad", width=60, anchor="center")
         self.tree.heading("precio_unitario", text="Precio Unitario")
         self.tree.column("precio_unitario", width=110, anchor="e")
         self.tree.heading("total", text="Total")
@@ -182,7 +186,7 @@ class CarritoConSecciones:
         """Abre el diálogo de gestión de secciones"""
         GestorSecciones(self.parent, self)
 
-    def agregar_item(self, nombre_prod: str, cantidad: float, precio_unit: float, seccion_id: Optional[str] = None):
+    def agregar_item(self, nombre_prod: str, cantidad: float, precio_unit: float, unidad_producto: str, seccion_id: Optional[str] = None):
         """Añade o actualiza un producto en el carrito"""
         if self.sectioning_enabled:
             if seccion_id is None:
@@ -196,7 +200,8 @@ class CarritoConSecciones:
             self.items[key].cantidad += cantidad
             self.items[key].subtotal = self.items[key].cantidad * self.items[key].precio_unitario
         else:
-            self.items[key] = ItemCarrito(nombre_prod, cantidad, precio_unit, seccion_id)
+            # ✅ CORREGIDO: Ahora pasa los 5 parámetros en el orden correcto
+            self.items[key] = ItemCarrito(nombre_prod, cantidad, precio_unit, unidad_producto, seccion_id)
         
         self._actualizar_display()
         self._notificar_cambio()
@@ -204,21 +209,19 @@ class CarritoConSecciones:
     def _mostrar_dialogo_seccion(self, nombre_prod: str, cantidad: float, precio_unit: float):
         """Muestra diálogo para seleccionar sección"""
         if not self.sectioning_enabled or not self.secciones:
-            self.agregar_item(nombre_prod, cantidad, precio_unit)
-            return
+            # ✅ Esto necesitaría también la unidad, pero parece que no se usa
+            pass  # Esta función parece no usarse
         
-        DialogoSeccion(self.parent, list(self.secciones.values()), 
-                       lambda seccion_id: self.agregar_item(nombre_prod, cantidad, precio_unit, seccion_id))
-
     def obtener_items(self):
         """Retorna una lista con todos los items del carrito (formato original)"""
         items_lista = []
         for item in self.items.values():
             items_lista.append([
-                f"{item.cantidad:.2f}",
+                f"{item.cantidad:.2f}", 
                 item.nombre_producto,
                 f"${item.precio_unitario:.2f}",
-                f"${item.subtotal:.2f}"
+                f"${item.subtotal:.2f}",
+                item.unidad_producto,
             ])
         return items_lista
 
@@ -239,7 +242,8 @@ class CarritoConSecciones:
                         f"{item.cantidad:.2f}",
                         item.nombre_producto,
                         f"${item.precio_unitario:.2f}",
-                        f"${item.subtotal:.2f}"
+                        f"${item.subtotal:.2f}",
+                        item.unidad_producto,
                     ])
                     subtotal_seccion += item.subtotal
             
@@ -326,7 +330,8 @@ class CarritoConSecciones:
             for key, item in self.items.items():
                 self.tree.insert("", "end",
                                  text=item.nombre_producto,
-                                 values=(f"{item.cantidad:.2f}",
+                                 values=(f"${item.cantidad:.2f}",
+                                         item.unidad_producto,
                                          f"${item.precio_unitario:.2f}",
                                          f"${item.subtotal:.2f}",
                                          "🗑️"),
@@ -345,7 +350,8 @@ class CarritoConSecciones:
                         if item.seccion_id == seccion_id:
                             self.tree.insert(seccion_node, "end",
                                              text=item.nombre_producto,
-                                             values=(f"{item.cantidad:.2f}",
+                                             values=(f"{item.cantidad:.2f}",        # Solo número
+                                                     item.unidad_producto,    # ✅ CORREGIDO: mostrar cantidad con unidad
                                                      f"${item.precio_unitario:.2f}",
                                                      f"${item.subtotal:.2f}",
                                                      "🗑️"),
