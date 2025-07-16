@@ -1,679 +1,542 @@
-import os
-import tkinter as tk
-from tkinter import messagebox, simpledialog
-from datetime import datetime
-import json
-from decimal import Decimal
-from typing import Dict, List, Optional
-from typing import Dict, List, Optional, Any, Callable
+# receipt_generator_refactored.py
+# Versión actualizada que integra el sistema de secciones
 
-# Import components
-from .components.database_manager import DatabaseManager
-from .components.pdf_generator import PDFGenerator
-from .components.auth_dialog import AuthenticationManager
-from .components.ui_builder import UIBuilder
-from .components.product_manager import ProductManager
-from .components.cart_manager import CartManager, CartDialog
-from .models.receipt_models import ProductData, ClientData, CartItem
+import tkinter as tk
+from tkinter import ttk, messagebox
+from src.modules.receipts.components import database
+from src.modules.receipts.components import generador_pdf as generador_pdf
+from src.modules.receipts.components.carrito_module import CarritoConSecciones, DialogoSeccion
+from src.modules.receipts.components import generador_excel
 
 class ReciboAppMejorado:
-    """Refactored Receipt Application with modular components"""
-    
-    def __init__(self, root: tk.Tk, user_data,
-                 db_manager: DatabaseManager,
-                 pdf_generator: PDFGenerator,
-                 cart_manager:CartManager,
-                 product_manager: ProductManager,
-                 on_state_change: Optional[Callable] = None):
-        print(f"[DEBUG] ===== CREANDO NUEVA INSTANCIA DE ReciboAppMejorado =====\n")
-        print(f"[DEBUG] ReciboAppMejorado instance id: {id(self)}")
+    def __init__(self, parent=None, user_data=None):
+        self.root = parent if parent else tk.Tk()
+        self.user_data = user_data or {}
         
-        self.root = root
-        self.root.title("Generador de Recibos")
-        self.root.geometry("1000x1000")
-        
-        # Initialize user data
-        self.user_data = user_data if isinstance(user_data, dict) else json.loads(user_data)
-        self.es_admin = (self.user_data['rol'] == 'admin')
-        
-        # Initialize components
-        self.db_manager = db_manager
-        self.pdf_generator = pdf_generator
-        self.cart_manager = cart_manager
-        self.product_manager = product_manager
-        self.auth_manager = AuthenticationManager(self)
-        self.ui_builder = UIBuilder(root)
-        self.on_state_change = on_state_change # <-- NUEVA LÍNEA
-        
-        print(f"[DEBUG] Callback on_state_change recibido:")
-        if on_state_change:
-            print(f"[DEBUG]   - Es una función válida: {callable(on_state_change)}")
-            print(f"[DEBUG]   - Callback function object id: {id(on_state_change)}")
-        else:
-            print(f"[DEBUG]   - Es None: {on_state_change is None}")
+        self.root.title("Disfruleg - Sistema de Ventas con Secciones")
+        self.root.geometry("1100x750")
+
+        self.style = ttk.Style(self.root)
+        self.style.theme_use("clam")
+        self.style.configure("Total.TLabel", font=("Helvetica", 12, "bold"))
+
+        self.grupos_data = {nombre: g_id for g_id, nombre in database.obtener_grupos()}
+        if not self.grupos_data:
+            messagebox.showerror("Error de Base de Datos", "No se pudieron cargar los grupos de clientes.")
+            if parent is None:
+                self.root.destroy()
+            return
             
-        print(f"[DEBUG] ===== INSTANCIA CREADA EXITOSAMENTE =====\n")
+        self.contador_pestañas = 0
+        self._crear_widgets_principales()
+        self._agregar_pestaña()
 
+    def _crear_widgets_principales(self):
+        """Crea los widgets principales de la aplicación"""
+        frame_superior = ttk.Frame(self.root, padding=(10, 10, 10, 0))
+        frame_superior.pack(fill="x")
         
-        # Initialize variables
-        self.grupo_seleccionado = tk.StringVar()
-        self.cliente_seleccionado = tk.StringVar()
-        self.search_var = tk.StringVar()
-        self.guardar_en_bd = tk.BooleanVar(value=True)
-        self.status_var = tk.StringVar()
-        self.sectioning_var = None  # Will be set when section selection is created
+        btn_agregar_tab = ttk.Button(
+            frame_superior, 
+            text="➕ Agregar Nuevo Pedido", 
+            command=self._agregar_pestaña
+        )
+        btn_agregar_tab.pack(side="left")
         
-        # Data containers
-        self.grupos: List[Dict[str, Any]] = []
-        self.clientes: List[ClientData] = []
-        self.current_group: Optional[Dict[str, Any]] = None
-        self.current_client: Optional[ClientData] = None
+        # Información sobre secciones
+        info_label = ttk.Label(
+            frame_superior, 
+            text="💡 Tip: Active 'Habilitar Secciones' para organizar productos por categorías",
+            font=("Arial", 9),
+            foreground="blue"
+        )
+        info_label.pack(side="right", padx=10)
         
-        # UI components
-        self.grupo_combo = None
-        self.cliente_combo = None
-        self.productos_tree = None
-        self.carrito_tree = None
-        self.total_var = None
-        self.section_selection_frame = None
-        self.section_management_button = None
-        
-        # Initialize application
-        self._load_data()
-        self._create_interface()
-        self._setup_initial_status()
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(pady=(5, 10), padx=10, expand=True, fill="both")
 
-    def _notify_state_change(self):
-        """Helper method to call the callback if it exists."""
-        print(f"[DEBUG] ===== NOTIFICANDO CAMBIO DE ESTADO =====\n")
-        print(f"[DEBUG] ReciboAppMejorado instance id: {id(self)} está notificando cambio de estado")
-        
-        if self.on_state_change:
-            print(f"[DEBUG]   - Callback es válido, llamando función...")
-            print(f"[DEBUG]   - Callback function object id: {id(self.on_state_change)}")
-            self.on_state_change()
-            print(f"[DEBUG]   - Callback ejecutado exitosamente")
-        else:
-            print(f"[DEBUG]   - ERROR: No hay callback configurado (on_state_change es None)")
+    def _agregar_pestaña(self):
+        """Agrega una nueva pestaña de pedido"""
+        if self.contador_pestañas >= 5:
+            messagebox.showinfo("Límite Alcanzado", "No se pueden agregar más de 5 pedidos.")
+            return
             
-        print(f"[DEBUG] ===== NOTIFICACIÓN COMPLETADA =====\n")
+        self.contador_pestañas += 1
+        nueva_pestaña = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(nueva_pestaña, text=f"Pedido {self.contador_pestañas}")
+        self._crear_contenido_tab(nueva_pestaña)
+        self.notebook.select(nueva_pestaña)
 
-    def on_client_change(self, event=None):
-        """Handle client selection change"""
-        # ... (toda tu lógica existente en on_client_change) ...
-        cliente_display = self.cliente_seleccionado.get()
-        cliente_nombre = cliente_display.split(' (')[0] if ' (' in cliente_display else cliente_display
-        self.current_client = next((c for c in self.clientes if c.nombre_cliente == cliente_nombre), None)
+    def _crear_contenido_tab(self, tab_frame):
+        """Crea el contenido de una pestaña"""
+        widgets = {"clientes_map": {}}
 
-        if self.current_client:
-            self.product_manager.update_client_data(self.current_client)
-            self._update_products_display()
-            self.cart_manager.clear_cart()
-            self._update_cart_display() # Esto ya notificará el cambio de estado del carrito
-            self._enable_section_selection()
+        # Frame de búsqueda y cliente
+        frame_busqueda = ttk.LabelFrame(tab_frame, text="1. Cliente y Búsqueda", padding="10")
+        frame_busqueda.pack(fill="x")
+        frame_busqueda.columnconfigure(1, weight=1)
+
+        # Widgets de selección de cliente
+        ttk.Label(frame_busqueda, text="Grupo:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        widgets['combo_grupos'] = ttk.Combobox(frame_busqueda, values=list(self.grupos_data.keys()), state="readonly")
+        widgets['combo_grupos'].grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        ttk.Label(frame_busqueda, text="Cliente:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        widgets['combo_clientes'] = ttk.Combobox(frame_busqueda, state="disabled")
+        widgets['combo_clientes'].grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        
+        # Widgets de búsqueda
+        ttk.Label(frame_busqueda, text="Buscar Producto:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        widgets['entry_busqueda'] = ttk.Entry(frame_busqueda)
+        widgets['entry_busqueda'].grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        
+        widgets['btn_buscar'] = ttk.Button(frame_busqueda, text="🔍 Buscar")
+        widgets['btn_buscar'].grid(row=2, column=2, padx=5, pady=5)
+        
+        # Frame central para resultados y carrito
+        frame_central = ttk.Frame(tab_frame)
+        frame_central.pack(fill="both", expand=True, pady=10)
+        frame_central.columnconfigure(0, weight=1)
+        frame_central.columnconfigure(1, weight=2)
+        frame_central.rowconfigure(1, weight=1)
+        
+        # Resultados de búsqueda
+        ttk.Label(frame_central, text="Resultados de Búsqueda (Doble clic para agregar)").grid(
+            row=0, column=0, sticky="w", pady=(0, 5)
+        )
+        
+        # Frame para los resultados con scrollbar
+        frame_resultados = ttk.Frame(frame_central)
+        frame_resultados.grid(row=1, column=0, sticky="nsew", padx=(0, 5))
+        frame_resultados.rowconfigure(0, weight=1)
+        frame_resultados.columnconfigure(0, weight=1)
+        
+        # Modified: Added 'Es Especial' column for internal use, but not shown.
+        cols_resultados = ("Producto", "Precio")
+        widgets['tree_resultados'] = ttk.Treeview(
+            frame_resultados, 
+            columns=cols_resultados, 
+            show="headings", 
+            height=8
+        )
+        
+        for col in cols_resultados: 
+            widgets['tree_resultados'].heading(col, text=col)
+        widgets['tree_resultados'].column("Precio", width=100, anchor="e")
+        widgets['tree_resultados'].grid(row=0, column=0, sticky="nsew")
+        
+        # Scrollbar para resultados
+        scrollbar_resultados = ttk.Scrollbar(
+            frame_resultados, 
+            orient="vertical", 
+            command=widgets['tree_resultados'].yview
+        )
+        widgets['tree_resultados'].configure(yscrollcommand=scrollbar_resultados.set)
+        scrollbar_resultados.grid(row=0, column=1, sticky="ns")
+
+        # **CARRITO CON SECCIONES**
+        frame_carrito = ttk.LabelFrame(frame_central, text="Carrito de Compras", padding="5")
+        frame_carrito.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(5, 0))
+        
+        # Crear el carrito con secciones
+        widgets['carrito_obj'] = CarritoConSecciones(
+            frame_carrito, 
+            on_change_callback=lambda w=widgets: self._actualizar_total(w)
+        )
+
+        # Frame de total y acciones
+        frame_acciones = ttk.LabelFrame(tab_frame, text="2. Total del Pedido", padding="10")
+        frame_acciones.pack(fill="x", pady=(10, 0))
+        
+        # Total
+        widgets['lbl_total_valor'] = ttk.Label(frame_acciones, text="$0.00", style="Total.TLabel")
+        widgets['lbl_total_valor'].pack(side="right")
+        ttk.Label(frame_acciones, text="Total:", style="Total.TLabel").pack(side="right", padx=(20, 5))
+        
+        # Contador de productos
+        widgets['lbl_contador'] = ttk.Label(frame_acciones, text="0 productos")
+        widgets['lbl_contador'].pack(side="left")
+        
+        # Frame de botones finales
+        frame_final = ttk.LabelFrame(tab_frame, text="3. Finalizar Venta", padding="10")
+        frame_final.pack(fill="x", pady=10)
+        
+        # Botones de acción
+        frame_botones = ttk.Frame(frame_final)
+        frame_botones.pack(fill="x")
+        
+        widgets['btn_limpiar'] = ttk.Button(
+            frame_botones, 
+            text="🗑️ Limpiar Carrito",
+            command=lambda w=widgets: self._limpiar_carrito(w)
+        )
+        widgets['btn_limpiar'].pack(side="left", padx=(0, 10))
+
+        # *** NUEVO BOTÓN DE EXCEL ***
+        widgets['btn_generar_excel'] = ttk.Button(
+        frame_botones, 
+        text="📊 Generar Excel",
+        command=lambda w=widgets: self._generar_excel(w)
+        )
+        widgets['btn_generar_excel'].pack(side="left", padx=(0, 10))
+        
+        widgets['btn_procesar_venta'] = ttk.Button(
+            frame_botones, 
+            text="✅ Registrar Venta y Generar Recibo",
+            style="Accent.TButton"
+        )
+        widgets['btn_procesar_venta'].pack(side="right")
+
+        # --- VINCULAR EVENTOS ---
+        widgets['combo_grupos'].bind("<<ComboboxSelected>>", 
+                                   lambda event, w=widgets: self._on_grupo_selected(event, w))
+        widgets['btn_buscar'].config(command=lambda w=widgets: self._buscar_insumos(w))
+        widgets['btn_procesar_venta'].config(command=lambda w=widgets: self._procesar_venta(w))
+        widgets['tree_resultados'].bind("<Double-1>", 
+                                      lambda event, w=widgets: self._abrir_ventana_cantidad(event, w))
+        
+        # Permitir búsqueda con Enter
+        widgets['entry_busqueda'].bind("<Return>", 
+                                     lambda event, w=widgets: self._buscar_insumos(w))
+
+    def _abrir_ventana_cantidad(self, event, widgets):
+        """Abre ventana para especificar cantidad y sección (si aplica)"""
+        seleccion = widgets['tree_resultados'].focus()
+        if not seleccion: 
+            return
+
+        # Modified: Retrieve all values, including the hidden 'es_especial' status.
+        producto_info = widgets['tree_resultados'].item(seleccion, "values")
+        # Ensure that producto_info has at least 3 elements (nombre, precio, es_especial, unidad)
+        if len(producto_info) < 4:
+            messagebox.showerror("Error", "Información del producto incompleta.")
+            return
+
+        nombre_prod = producto_info[0]
+        precio_str = producto_info[1]
+        es_especial = bool(int(producto_info[2])) # Convert '0' or '1' string to boolean
+        unidad_producto = producto_info[3] 
+
+        # Crear ventana de cantidad
+        top = tk.Toplevel(self.root)
+        top.title("Agregar Producto")
+        top.geometry("350x250" if es_especial else "350x200") # Adjust size if price entry is shown
+        top.resizable(False, False)
+        top.transient(self.root)
+        top.grab_set()
+
+        # Información del producto
+        ttk.Label(top, text=f"Producto: {nombre_prod}", 
+                 font=("Helvetica", 10, "bold")).pack(pady=5)
+        
+        # Original price label, might be hidden or updated if 'es_especial'
+        lbl_precio_actual = ttk.Label(top, text=f"Precio Base: {precio_str}", font=("Helvetica", 10))
+        lbl_precio_actual.pack(pady=2)
+        
+        # Frame para cantidad
+        frame_cantidad = ttk.Frame(top)
+        frame_cantidad.pack(pady=5)
+        
+        ttk.Label(frame_cantidad, text="Cantidad:").pack(side="left", padx=5)
+        entry_cantidad = ttk.Entry(frame_cantidad, width=10)
+        entry_cantidad.pack(side="left", padx=5)
+        entry_cantidad.focus()
+        entry_cantidad.insert(0, "1.0")
+        entry_cantidad.select_range(0, tk.END)
+
+        # Modified: Price modification for special products
+        entry_precio_modificable = None
+        if es_especial:
+            lbl_precio_actual.config(text=f"Precio Actual: {precio_str}") # Re-label for clarity
             
-            client_type = self.db_manager.get_client_type_name(self.current_client.id_tipo_cliente)
-            self.ui_builder.update_client_type_display(
-                self.cliente_combo, client_type, float(self.current_client.descuento)
+            frame_precio = ttk.Frame(top)
+            frame_precio.pack(pady=5)
+            
+            ttk.Label(frame_precio, text="Nuevo Precio:").pack(side="left", padx=5)
+            entry_precio_modificable = ttk.Entry(frame_precio, width=10)
+            entry_precio_modificable.pack(side="left", padx=5)
+            # Pre-fill with current price for easy modification
+            entry_precio_modificable.insert(0, precio_str.replace('$', ''))
+            
+            ttk.Label(top, text="*Producto especial: puedes modificar el precio.", 
+                     font=("Arial", 8), foreground="red").pack(pady=2)
+
+
+        # Frame para sección (si está habilitado)
+        frame_seccion = ttk.Frame(top)
+        combo_seccion = None
+        
+        carrito = widgets['carrito_obj']
+        if carrito.sectioning_enabled and carrito.secciones:
+            frame_seccion.pack(pady=5)
+            ttk.Label(frame_seccion, text="Sección:").pack(side="left", padx=5)
+            
+            secciones_nombres = [s.nombre for s in carrito.secciones.values()]
+            combo_seccion = ttk.Combobox(frame_seccion, values=secciones_nombres, 
+                                       state="readonly", width=15)
+            combo_seccion.pack(side="left", padx=5)
+            if secciones_nombres:
+                combo_seccion.set(secciones_nombres[0])
+
+        # Botones
+        frame_botones = ttk.Frame(top)
+        frame_botones.pack(pady=15)
+        
+        btn_aceptar = ttk.Button(
+            frame_botones, 
+            text="Agregar", 
+            command=lambda: self._confirmar_agregar_al_carrito(
+                nombre_prod, entry_cantidad.get(), 
+                entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
+                unidad_producto,combo_seccion, top, widgets
             )
-            
-            self.status_var.set(
-                f"Cliente: {cliente_nombre} | Descuento: {float(self.current_client.descuento)}% | "
-                f"{len(self.product_manager.all_products)} productos"
-            )
-            # CAMBIO 3: Notificar explícitamente que el cliente ha cambiado
-            self._notify_state_change()
+        )
+        btn_aceptar.pack(side="left", padx=5)
+        
+        ttk.Button(frame_botones, text="Cancelar", command=top.destroy).pack(side="left", padx=5)
+        
+        # Permitir agregar con Enter
+        entry_cantidad.bind("<Return>", 
+                          lambda e: self._confirmar_agregar_al_carrito(
+                              nombre_prod, entry_cantidad.get(), 
+                              entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
+                              unidad_producto,combo_seccion, top, widgets
+                          ))
+        if es_especial and entry_precio_modificable:
+            entry_precio_modificable.bind("<Return>", 
+                                        lambda e: self._confirmar_agregar_al_carrito(
+                                            nombre_prod, entry_cantidad.get(), 
+                                            entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
+                                            unidad_producto,combo_seccion, top, widgets
+                                        ))
     
-    def _load_data(self):
-        """Load initial data from database"""
+    def _confirmar_agregar_al_carrito(self, nombre_prod, cantidad_str, precio_str_or_modified, unidad_producto, combo_seccion, toplevel, widgets):
+        """Confirma y agrega el producto al carrito"""
         try:
-            self.grupos = self.db_manager.get_groups()
-            # Don't load clients initially - they'll be loaded when group is selected
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al cargar datos: {str(e)}")
-    
-    def _create_interface(self):
-        """Create the user interface"""
-        main_frame = tk.Frame(self.root)
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Create sections
-        self._create_group_section(main_frame)
-        self._create_client_section(main_frame)
-        self._create_section_selection(main_frame)
-        self._create_products_section(main_frame)
-        self._create_cart_section(main_frame)
-        self._create_actions_section(main_frame)
-        self._create_status_bar()
-    
-    def _create_group_section(self, parent):
-        """Create group selection section"""
-        group_names = [grupo['clave_grupo'] for grupo in self.grupos]
-        self.grupo_combo = self.ui_builder.create_group_selection(
-            parent, group_names, self.grupo_seleccionado,
-            self.on_group_change, self.guardar_en_bd
-        )
-    
-    def _create_client_section(self, parent):
-        """Create client selection section"""
-        # Start with empty client list - will be populated when group is selected
-        self.cliente_combo = self.ui_builder.create_client_section(
-            parent, [], self.cliente_seleccionado, self.on_client_change
-        )
-    
-    def _create_section_selection(self, parent):
-        """Create section selection section"""
-        self.section_selection_frame = self.ui_builder.create_section_selection(
-            parent, self.on_sectioning_toggle, self.on_manage_sections
-        )
-        # Connect sectioning_var to the frame's variable
-        self.sectioning_var = self.section_selection_frame.sectioning_var
-    
-    def _create_products_section(self, parent):
-        """Create products section"""
-        self.productos_tree = self.ui_builder.create_products_section(
-            parent, self.search_var, self.on_search_change,
-            self.on_clear_search, self.on_product_double_click
-        )
-    
-    def _create_cart_section(self, parent):
-        """Create cart section"""
-        self.carrito_tree, self.total_var = self.ui_builder.create_cart_section(
-            parent, self.on_cart_double_click, self.on_remove_from_cart,
-            self.on_clear_cart
-        )
-    
-    def _create_actions_section(self, parent):
-        """Create actions section"""
-        self.ui_builder.create_actions_section(
-            parent, self.generate_receipt, self.show_preview
-        )
-    
-    def _create_status_bar(self):
-        """Create status bar"""
-        self.ui_builder.create_status_bar(self.root, self.status_var)
-    
-    def _setup_initial_status(self):
-        """Setup initial status message"""
-        self.status_var.set(
-            f"Usuario: {self.user_data['nombre_completo']} | "
-            f"Rol: {self.user_data['rol']} | "
-            f"Seleccione un grupo"
-        )
-    
-    # Event handlers
-    def on_group_change(self, event=None):
-        """Handle group selection change"""
-        grupo_nombre = self.grupo_seleccionado.get()
-        
-        # Find selected group
-        self.current_group = None
-        for grupo in self.grupos:
-            if grupo['clave_grupo'] == grupo_nombre:
-                self.current_group = grupo
-                break
-        
-        if self.current_group:
-            try:
-                # Load clients for this group
-                self.clientes = self.db_manager.get_clients_by_group(self.current_group['id_grupo'])
-                
-                # Update client combo with filtered clients
-                client_names = []
-                for cliente in self.clientes:
-                    client_type = self.db_manager.get_client_type_name(cliente.id_tipo_cliente)
-                    display_name = f"{cliente.nombre_cliente} ({client_type})"
-                    client_names.append(display_name)
-                
-                self.ui_builder.populate_combobox(self.cliente_combo, client_names)
-                self.ui_builder.enable_client_selection(self.cliente_combo)
-                
-                # Clear current client and reset UI
-                self.current_client = None
-                self.cliente_seleccionado.set("")
-                self.cart_manager.clear_cart()
-                self._update_cart_display()
-                self._clear_products_display()
-                
-                # Update status
-                self.status_var.set(
-                    f"Grupo: {grupo_nombre} | "
-                    f"{len(self.clientes)} clientes disponibles | "
-                    f"Seleccione un cliente"
-                )
-                
-            except Exception as e:
-                messagebox.showerror("Error", f"Error al cargar clientes: {str(e)}")
-        else:
-            # Clear everything when no group is selected
-            self.clientes = []
-            self.current_client = None
-            self.ui_builder.populate_combobox(self.cliente_combo, [])
-            self.ui_builder.disable_client_selection(self.cliente_combo)
-            self.cart_manager.clear_cart()
-            self._update_cart_display()
-            self._clear_products_display()
-    
-    def on_client_change(self, event=None):
-        """Handle client selection change"""
-        cliente_display = self.cliente_seleccionado.get()
-        
-        # Extract client name from display (remove type info)
-        if ' (' in cliente_display:
-            cliente_nombre = cliente_display.split(' (')[0]
-        else:
-            cliente_nombre = cliente_display
-        
-        # Find selected client
-        self.current_client = None
-        for cliente in self.clientes:
-            if cliente.nombre_cliente == cliente_nombre:
-                self.current_client = cliente
-                break
-        
-        if self.current_client:
-            # Update product manager with client data
-            self.product_manager.update_client_data(self.current_client)
-            
-            # Update products display
-            self._update_products_display()
-            
-            # Clear cart
-            self.cart_manager.clear_cart()
-            self._update_cart_display()
-            
-            # Enable section selection UI
-            self._enable_section_selection()
-            
-            # Update client type display
-            client_type = self.db_manager.get_client_type_name(self.current_client.id_tipo_cliente)
-            self.ui_builder.update_client_type_display(
-                self.cliente_combo, client_type, float(self.current_client.descuento)
-            )
-            
-            # Update status
-            self.status_var.set(
-                f"Grupo: {self.current_group['clave_grupo']} | "
-                f"Cliente: {cliente_nombre} | "
-                f"Descuento: {float(self.current_client.descuento)}% | "
-                f"{len(self.product_manager.all_products)} productos"
-            )
-    
-    def on_search_change(self, *args):
-        """Handle search text change"""
-        if self.product_manager:
-            search_text = self.search_var.get()
-            filtered_products = self.product_manager.filter_products(search_text)
-            self._update_products_display(filtered_products)
-    
-    def on_clear_search(self):
-        """Handle clear search button"""
-        self.search_var.set("")
-        if self.product_manager:
-            self._update_products_display()
-    
-    def on_product_double_click(self, event):
-        """Handle product double click"""
-        if not self.current_group:
-            messagebox.showerror("Error", "Debe seleccionar un grupo primero")
+            cantidad = float(cantidad_str)
+            if cantidad <= 0: 
+                raise ValueError("La cantidad debe ser positiva.")
+        except ValueError:
+            messagebox.showerror("Cantidad Inválida", 
+                               "Introduce un número válido y positivo.", parent=toplevel)
             return
-        
-        if not self.current_client:
-            messagebox.showerror("Error", "Debe seleccionar un cliente primero")
-            return
-        
-        item_seleccionado = self.productos_tree.focus()
-        if not item_seleccionado:
-            return
-        
+
         try:
-            # Get product ID from tags
-            item_data = self.productos_tree.item(item_seleccionado)
-            product_id = int(item_data['tags'][0])
-            product = self.product_manager.get_product_by_id(product_id)
-            
-            if not product:
-                messagebox.showerror("Error", "Producto no encontrado")
+            # Use the passed price string, which might be the original or modified
+            precio_unit = float(precio_str_or_modified.replace('$', '')) 
+            if precio_unit < 0:
+                raise ValueError("El precio no puede ser negativo.")
+        except ValueError:
+            messagebox.showerror("Precio Inválido", 
+                               "Introduce un precio válido y no negativo.", parent=toplevel)
+            return
+        
+        # Determinar sección si aplica
+        seccion_id = None
+        carrito = widgets['carrito_obj']
+        
+        if carrito.sectioning_enabled and combo_seccion:
+            nombre_seccion = combo_seccion.get()
+            for sid, seccion in carrito.secciones.items():
+                if seccion.nombre == nombre_seccion:
+                    seccion_id = sid
+                    break
+        
+        # Agregar al carrito
+        carrito.agregar_item(nombre_prod, cantidad, precio_unit, unidad_producto, seccion_id)
+        toplevel.destroy()
+
+    def _limpiar_carrito(self, widgets):
+        """Limpia el carrito completo"""
+        widgets['carrito_obj'].limpiar_carrito()
+
+    def _actualizar_total(self, widgets):
+        """Actualiza el total y contador del carrito"""
+        carrito = widgets['carrito_obj']
+        total = carrito.obtener_total()
+        count = len(carrito.items)
+        
+        widgets['lbl_total_valor'].config(text=f"${total:.2f}")
+        widgets['lbl_contador'].config(text=f"{count} producto{'s' if count != 1 else ''}")
+    
+    def _generar_excel(self, widgets):
+            """Genera un archivo Excel con el contenido del carrito"""
+            nombre_cliente = widgets['combo_clientes'].get()
+            if not nombre_cliente:
+                messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
+                return
+
+            carrito = widgets['carrito_obj']
+            if not carrito.items:
+                messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
                 return
             
-            # Check if special product and user is not admin
-            if product.es_especial and not self.es_admin:
-                if not self.auth_manager.verify_admin_password(self.root):
-                    return
-                messagebox.showinfo("Autorizado", "Acceso autorizado. Puede agregar el producto especial.")
+            total = carrito.obtener_total()
             
-            # Check if already in cart (behavior depends on sectioning)
-            if self.cart_manager.is_in_cart(product_id):
-                if not self.cart_manager.sectioning_enabled:
-                    # Without sectioning, edit existing quantity
-                    if messagebox.askyesno("Producto en carrito", 
-                                         "Este producto ya está en el carrito. ¿Desea editar la cantidad?"):
-                        self._edit_cart_quantity(product_id)
-                    return
-                else:
-                    # With sectioning, allow adding to different sections
-                    # The dialog will handle section selection
-                    pass
-            
-            # Show add to cart dialog
-            self._show_add_to_cart_dialog(product)
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Ocurrió un error: {str(e)}")
-    
-    def on_cart_double_click(self, event):
-        """Handle cart item double click"""
-        item_seleccionado = self.carrito_tree.focus()
-        if not item_seleccionado:
-            return
-        
-        try:
-            cart_key = self.carrito_tree.item(item_seleccionado, "tags")[0]
-            self._edit_cart_quantity(cart_key)
-        except (ValueError, IndexError):
-            messagebox.showerror("Error", "Error al obtener información del producto")
-    
-    def on_remove_from_cart(self):
-        """Handle remove from cart button"""
-        item_seleccionado = self.carrito_tree.focus()
-        if not item_seleccionado:
-            messagebox.showwarning("Advertencia", "Seleccione un producto del carrito para eliminar")
-            return
-        
-        try:
-            cart_key = self.carrito_tree.item(item_seleccionado, "tags")[0]
-            cart_items = self.cart_manager.get_cart_items()
-            
-            if cart_key in cart_items:
-                product_name = cart_items[cart_key].producto.nombre_producto
-                if messagebox.askyesno("Confirmar", f"¿Eliminar {product_name} del carrito?"):
-                    self.cart_manager.remove_item(cart_key)
-                    self._update_cart_display()
-                    self._update_products_display()
-        except (ValueError, IndexError):
-            messagebox.showerror("Error", "Error al eliminar producto")
-    
-    def on_clear_cart(self):
-        """Handle clear cart button"""
-        if self.cart_manager.clear_cart():
-            self._update_cart_display()
-            self._update_products_display()
-    
-    def on_sectioning_toggle(self):
-        """Handle sectioning toggle"""
-        enabled = self.sectioning_var.get()
-        self.cart_manager.enable_sectioning(enabled)
-        
-        # Show/hide section management button
-        if enabled:
-            self.ui_builder.show_section_management_button(self.section_selection_frame)
-        else:
-            self.ui_builder.hide_section_management_button(self.section_selection_frame)
-        
-        self._update_cart_display()
-    
-    def on_manage_sections(self):
-        """Handle section management button"""
-        if not self.cart_manager.sectioning_enabled:
-            messagebox.showwarning("Advertencia", "Las secciones no están habilitadas")
-            return
-        
-        def get_updated_sections():
-            return self.cart_manager.get_sections()
-        
-        def get_section_item_count(section_id: str) -> int:
-            return len(self.cart_manager.get_section_items(section_id))
+            if not messagebox.askyesno("Generar Excel", 
+                                    f"¿Generar archivo Excel para '{nombre_cliente}'?\n\n"
+                                    f"Total: ${total:.2f}"):
+                return
 
-        self.ui_builder.create_section_management_dialog(
-            self.root, get_updated_sections,
-            self.cart_manager.add_section,
-            self.cart_manager.remove_section,
-            self.cart_manager.rename_section,
-            self._refresh_section_management,
-            get_section_item_count
-        )
-    
-    def _enable_section_selection(self):
-        """Enable section selection UI after client is selected"""
-        self.ui_builder.enable_section_controls(self.section_selection_frame)
-    
-    def _refresh_section_management(self):
-        """Refresh section management after changes"""
-        # This method can be used to refresh UI elements when sections change
-        # For now, it's not needed as the dialog updates automatically
-        pass
-    
-    # Helper methods
-    def _show_add_to_cart_dialog(self, product: ProductData):
-        """Show dialog to add product to cart"""
-        price_info = self.product_manager.get_price_info(product)
-        
-        def on_add_callback(product, cantidad, price_info, section_id=None):
-            """Callback when product is added to cart"""
-            success = self.cart_manager.add_item(
-                product, cantidad,
-                float(price_info['precio_base']),
-                float(price_info['precio_final']),
-                float(price_info['monto_descuento']),
-                section_id
-            )
-            
-            if success:
-                self._update_cart_display()
-                self._update_products_display()
-        
-        # Create dialog
-        CartDialog(self.root, product, price_info, on_add_callback,
-                  self.cart_manager.get_sections(),
-                  self.cart_manager.sectioning_enabled)
-    
-    def _edit_cart_quantity(self, cart_key: str):
-        """Edit quantity of product in cart"""
-        cart_items = self.cart_manager.get_cart_items()
-        if cart_key not in cart_items:
-            return
-        
-        item = cart_items[cart_key]
-        nueva_cantidad = simpledialog.askfloat(
-            "Editar Cantidad",
-            f"Nueva cantidad para {item.producto.nombre_producto}:",
-            initialvalue=float(item.cantidad),
-            minvalue=0.01
-        )
-        
-        if nueva_cantidad:
-            if self.cart_manager.update_quantity(cart_key, Decimal(str(nueva_cantidad))):
-                self._update_cart_display()
-    
-    def _update_products_display(self, products: List[ProductData] = None):
-        """Update products display"""
-        if not self.product_manager:
-            return
-        
-        if products is None:
-            products = self.product_manager.filtered_products
-        
-        display_data = []
-        for product in products:
-            in_cart = self.cart_manager.is_in_cart(product.id_producto)
-            display_info = self.product_manager.get_product_display_info(product, in_cart)
-            display_data.append(display_info)
-        
-        self.ui_builder.populate_treeview(self.productos_tree, display_data, 'id_producto')
-    
-    def _clear_products_display(self):
-        """Clear products display"""
-        self.ui_builder.populate_treeview(self.productos_tree, [], 'id_producto')
-    
-    def _update_cart_display(self):
-        """Update cart display"""
-        print(f"[DEBUG] _update_cart_display llamado en instancia {id(self)}")
-        
-        if self.cart_manager.sectioning_enabled:
-            # Use sectioned display
-            sectioned_data = self.cart_manager.get_sectioned_cart_data()
-            self.ui_builder.populate_sectioned_treeview(self.carrito_tree, sectioned_data, 'id')
-        else:
-            # Use regular display
-            display_data = self.cart_manager.get_cart_display_data()
-            self.ui_builder.populate_treeview(self.carrito_tree, display_data, 'id')
-        
-        # Update total
-        total = self.cart_manager.get_cart_total()
-        self.total_var.set(f"Total: ${float(total):.2f}")
-        
-        # Update status
-        count = self.cart_manager.get_cart_count()
-        self.status_var.set(f"Carrito: {count} productos | Total: ${float(total):.2f}")
-        
-        print(f"[DEBUG] Cart actualizado: {count} productos, total: ${float(total):.2f}")
-        print(f"[DEBUG] Notificando cambio de estado desde _update_cart_display...")
-        self._notify_state_change()
-    
-    def show_preview(self):
-        """Show receipt preview"""
-        if not self.current_group:
-            messagebox.showerror("Error", "Debe seleccionar un grupo")
-            return
-        
-        if not self.current_client:
-            messagebox.showerror("Error", "Debe seleccionar un cliente")
-            return
-        
-        if self.cart_manager.get_cart_count() == 0:
-            messagebox.showerror("Error", "El carrito está vacío")
-            return
-        
-        # Generate preview content
-        content = f"RECIBO PARA: {self.current_client.nombre_cliente}\n"
-        content += f"Fecha: {datetime.now().strftime('%Y-%m-%d')}\n"
-        content += "="*50 + "\n"
-        
-        if self.cart_manager.sectioning_enabled:
-            # Sectioned preview
-            sectioned_data = self.cart_manager.get_sectioned_cart_data()
-            for section_id, section_data in sectioned_data.items():
-                if section_id != "default":
-                    content += f"\n═══ {section_data['name']} ═══\n"
-                    
-                    for item_data in section_data['items']:
-                        nombre_producto = item_data['nombre']
-                        cantidad = item_data['cantidad']
-                        unidad = item_data['unidad']
-                        precio_final = item_data['precio_final']
-                        subtotal = item_data['subtotal']
-                        
-                        content += f"{nombre_producto}\n"
-                        content += f"  {cantidad} {unidad} x {precio_final} = {subtotal}\n\n"
-                    
-                    content += f"Subtotal {section_data['name']}: ${section_data['subtotal']:.2f}\n"
-                    content += "-"*30 + "\n"
-        else:
-            # Regular preview
-            cart_items = self.cart_manager.get_cart_items()
-            for item in cart_items.values():
-                nombre_producto = item.producto.nombre_producto
-                if item.producto.es_especial:
-                    nombre_producto = f"🔒 {nombre_producto} (ESPECIAL)"
-                
-                content += f"{nombre_producto}\n"
-                content += f"  {float(item.cantidad):.2f} {item.producto.unidad_producto} x ${item.precio_final:.2f} = ${float(item.subtotal):.2f}\n\n"
-        
-        content += "="*50 + "\n"
-        content += f"TOTAL: ${float(self.cart_manager.get_cart_total()):.2f}"
-        
-        # Show preview window
-        self.ui_builder.create_preview_window(self.root, content)
-    
-    def generate_receipt(self):
-        """Generate final receipt"""
-        if not self.current_group:
-            messagebox.showerror("Error", "Debe seleccionar un grupo")
-            return
-        
-        if not self.current_client:
-            messagebox.showerror("Error", "Debe seleccionar un cliente")
-            return
-        
-        if self.cart_manager.get_cart_count() == 0:
-            messagebox.showerror("Error", "El carrito está vacío")
-            return
-        
-        total = float(self.cart_manager.get_cart_total())
-        
-        if not messagebox.askyesno("Confirmar", f"¿Generar recibo por ${total:.2f}?"):
-            return
-        
-        # Save to database if enabled
-        if self.guardar_en_bd.get():
             try:
-                products_data = self.cart_manager.get_products_for_invoice()
-                sections_data = self.cart_manager.get_sections_for_invoice()
-                invoice_id = self.db_manager.save_invoice(
-                    self.current_client.id_cliente, 
-                    products_data, 
-                    sections_data
-                )
-                if invoice_id:
-                    messagebox.showinfo("Éxito", f"Recibo guardado correctamente (ID: {invoice_id})")
-                    self.status_var.set(f"Factura #{invoice_id} guardada en base de datos")
+                # Decidir qué tipo de Excel generar
+                if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                    # Generar Excel con secciones
+                    items_por_seccion = carrito.obtener_items_por_seccion()
+                    
+                    # Verificar que realmente hay múltiples secciones con datos
+                    secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
+                    
+                    if len(secciones_con_datos) > 1:
+                        # Generar Excel con secciones
+                        ruta_excel = generador_excel.crear_excel_con_secciones(
+                            nombre_cliente, secciones_con_datos, total
+                        )
+                    else:
+                        # Solo una sección con datos, usar formato simple
+                        items_carrito = carrito.obtener_items()
+                        ruta_excel = generador_excel.crear_excel_simple(
+                            nombre_cliente, items_carrito
+                        )
+                else:
+                    # Generar Excel simple
+                    items_carrito = carrito.obtener_items()
+                    ruta_excel = generador_excel.crear_excel_simple(
+                        nombre_cliente, items_carrito
+                    )
+                
+                if ruta_excel:
+                    messagebox.showinfo("Excel Generado", 
+                                    f"Archivo Excel generado exitosamente!\n\n"
+                                    f"Guardado en: {ruta_excel}")
+                else:
+                    messagebox.showerror("Error", "No se pudo generar el archivo Excel.")
+                    
             except Exception as e:
-                messagebox.showerror("Error", f"Error al guardar en base de datos: {str(e)}")
-        
-        # Generate PDF
-        try:
-            if self.cart_manager.sectioning_enabled:
-                # Generate sectioned PDF
-                sectioned_data = self.cart_manager.get_sectioned_cart_data()
-                filename = self.pdf_generator.generate_sectioned_pdf(
-                    self.current_client.nombre_cliente,
-                    sectioned_data,
-                    total
-                )
-            else:
-                # Generate regular PDF
-                cart_items = self.cart_manager.get_cart_items()
-                productos_finales = []
-                
-                for item in cart_items.values():
-                    productos_finales.append((
-                        item.producto.nombre_producto,
-                        float(item.cantidad),
-                        item.producto.unidad_producto,
-                        item.precio_final,
-                        float(item.subtotal)
-                    ))
-                
-                filename = self.pdf_generator.create_pdf_from_products(
-                    self.current_client.nombre_cliente,
-                    productos_finales,
-                    total
-                )
-            
-            messagebox.showinfo("Éxito", f"Recibo guardado en {filename}")
-            
-        except Exception as e:
-            messagebox.showerror("Error PDF", f"No se pudo generar el PDF: {e}")
-        
-        # Clear cart option
-        if messagebox.askyesno("Limpiar Carrito", "¿Desea limpiar el carrito para un nuevo recibo?"):
-            self.cart_manager.clear_cart()
-            self._update_cart_display()
-            self._update_products_display()
-    
-    def __del__(self):
-        """Cleanup resources"""
-        if hasattr(self, 'db_manager'):
-            self.db_manager.close()
+                messagebox.showerror("Error", f"Error al generar Excel: {str(e)}")
 
-# Legacy support - keep the old class name as alias
-ReciboApp = ReciboAppMejorado
+
+    def _procesar_venta(self, widgets):
+        """Procesa la venta y genera el recibo"""
+        nombre_cliente = widgets['combo_clientes'].get()
+        if not nombre_cliente:
+            messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
+            return
+
+        carrito = widgets['carrito_obj']
+        if not carrito.items:
+            messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
+            return
+        
+        total = carrito.obtener_total()
+        
+        if not messagebox.askyesno("Confirmar Venta", 
+                                  f"¿Registrar esta venta para '{nombre_cliente}'?\n\n"
+                                  f"Total: ${total:.2f}"):
+            return
+
+        try:
+            id_cliente = widgets['clientes_map'][nombre_cliente]
+            
+            # Decidir qué tipo de recibo generar
+            if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                # Generar recibo con secciones
+                items_por_seccion = carrito.obtener_items_por_seccion()
+                
+                # Verificar que realmente hay múltiples secciones con datos
+                secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
+                
+                if len(secciones_con_datos) > 1:
+                    # Registrar en BD (formato simple para compatibilidad)
+                    items_simple = []
+                    for datos_seccion in secciones_con_datos.values():
+                        items_simple.extend(datos_seccion['items'])
+                    
+                    id_factura = database.crear_factura_completa(id_cliente, items_simple)
+                    
+                    # Generar PDF con secciones
+                    ruta_pdf = generador_pdf.crear_recibo_con_secciones(
+                        nombre_cliente, secciones_con_datos, total
+                    )
+                else:
+                    # Solo una sección con datos, usar formato simple
+                    items_carrito = carrito.obtener_items()
+                    id_factura = database.crear_factura_completa(id_cliente, items_carrito)
+                    ruta_pdf = generador_pdf.crear_recibo_simple(
+                        nombre_cliente, items_carrito, f"${total:.2f}"
+                    )
+            else:
+                # Generar recibo simple
+                items_carrito = carrito.obtener_items()
+                id_factura = database.crear_factura_completa(id_cliente, items_carrito)
+                ruta_pdf = generador_pdf.crear_recibo_simple(
+                    nombre_cliente, items_carrito, f"${total:.2f}"
+                )
+            
+            if id_factura and ruta_pdf:
+                messagebox.showinfo("Éxito", 
+                                  f"Venta registrada exitosamente!\n\n"
+                                  f"Factura ID: {id_factura}\n"
+                                  f"PDF guardado en: {ruta_pdf}")
+                
+                # Limpiar carrito
+                carrito.limpiar_carrito()
+            else:
+                messagebox.showerror("Error", "No se pudo completar la transacción.")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al procesar la venta: {str(e)}")
+
+    def _on_grupo_selected(self, event, widgets):
+        """Maneja la selección de grupo"""
+        widgets['combo_clientes'].set('')
+        widgets['combo_clientes']['values'] = []
+        
+        # Limpiar resultados
+        for item in widgets['tree_resultados'].get_children(): 
+            widgets['tree_resultados'].delete(item)
+        
+        nombre_grupo = widgets['combo_grupos'].get()
+        id_grupo = self.grupos_data.get(nombre_grupo)
+        
+        if id_grupo:
+            clientes = database.obtener_clientes_por_grupo(id_grupo)
+            widgets['clientes_map'] = {nombre: c_id for c_id, nombre in clientes}
+            widgets['combo_clientes']['values'] = list(widgets['clientes_map'].keys())
+            widgets['combo_clientes'].config(state="readonly")
+        else:
+            widgets['combo_clientes'].config(state="disabled")
+
+    def _buscar_insumos(self, widgets):
+        """Busca productos en la base de datos"""
+        nombre_grupo = widgets['combo_grupos'].get()
+        if not nombre_grupo:
+            messagebox.showwarning("Falta Grupo", "Por favor, selecciona un grupo.")
+            return
+            
+        id_grupo = self.grupos_data[nombre_grupo]
+        texto_busqueda = widgets['entry_busqueda'].get()
+        
+        # Limpiar resultados anteriores
+        for item in widgets['tree_resultados'].get_children(): 
+            widgets['tree_resultados'].delete(item)
+        
+        # Modified: Pass the es_especial status along with product name and price
+        productos = database.buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda)
+        
+        if productos:
+            for nombre, precio, es_especial, unidad in productos:
+                # Store es_especial as a hidden value in the treeview item
+                widgets['tree_resultados'].insert("", "end", values=(nombre, f"${precio:.2f}", es_especial, unidad))
+        else:
+            # Mostrar mensaje si no hay resultados
+            widgets['tree_resultados'].insert("", "end", values=("No se encontraron productos", "", "", ""))
+
+    def run(self):
+        """Run the application main loop"""
+        if self.root:
+            self.root.mainloop()
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    user_data = {
-        'nombre_completo': 'Usuario Prueba',
-        'rol': 'usuario'  # Change to 'admin' to test special products
-    }
-    app = ReciboAppMejorado(root, user_data)
-    root.mainloop()
+    app = ReciboAppMejorado()
+    app.run()
