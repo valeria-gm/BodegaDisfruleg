@@ -111,6 +111,7 @@ class ReciboAppMejorado:
         frame_resultados.rowconfigure(0, weight=1)
         frame_resultados.columnconfigure(0, weight=1)
         
+        # Modified: Added 'Es Especial' column for internal use, but not shown.
         cols_resultados = ("Producto", "Precio")
         widgets['tree_resultados'] = ttk.Treeview(
             frame_resultados, 
@@ -204,25 +205,36 @@ class ReciboAppMejorado:
         if not seleccion: 
             return
 
+        # Modified: Retrieve all values, including the hidden 'es_especial' status.
         producto_info = widgets['tree_resultados'].item(seleccion, "values")
-        
+        # Ensure that producto_info has at least 3 elements (nombre, precio, es_especial)
+        if len(producto_info) < 3:
+            messagebox.showerror("Error", "Información del producto incompleta.")
+            return
+
+        nombre_prod = producto_info[0]
+        precio_str = producto_info[1]
+        es_especial = bool(int(producto_info[2])) # Convert '0' or '1' string to boolean
+
         # Crear ventana de cantidad
         top = tk.Toplevel(self.root)
         top.title("Agregar Producto")
-        top.geometry("350x200")
+        top.geometry("350x250" if es_especial else "350x200") # Adjust size if price entry is shown
         top.resizable(False, False)
         top.transient(self.root)
         top.grab_set()
 
         # Información del producto
-        ttk.Label(top, text=f"Producto: {producto_info[0]}", 
+        ttk.Label(top, text=f"Producto: {nombre_prod}", 
                  font=("Helvetica", 10, "bold")).pack(pady=5)
-        ttk.Label(top, text=f"Precio: {producto_info[1]}", 
-                 font=("Helvetica", 10)).pack(pady=2)
+        
+        # Original price label, might be hidden or updated if 'es_especial'
+        lbl_precio_actual = ttk.Label(top, text=f"Precio Base: {precio_str}", font=("Helvetica", 10))
+        lbl_precio_actual.pack(pady=2)
         
         # Frame para cantidad
         frame_cantidad = ttk.Frame(top)
-        frame_cantidad.pack(pady=10)
+        frame_cantidad.pack(pady=5)
         
         ttk.Label(frame_cantidad, text="Cantidad:").pack(side="left", padx=5)
         entry_cantidad = ttk.Entry(frame_cantidad, width=10)
@@ -230,6 +242,24 @@ class ReciboAppMejorado:
         entry_cantidad.focus()
         entry_cantidad.insert(0, "1.0")
         entry_cantidad.select_range(0, tk.END)
+
+        # Modified: Price modification for special products
+        entry_precio_modificable = None
+        if es_especial:
+            lbl_precio_actual.config(text=f"Precio Actual: {precio_str}") # Re-label for clarity
+            
+            frame_precio = ttk.Frame(top)
+            frame_precio.pack(pady=5)
+            
+            ttk.Label(frame_precio, text="Nuevo Precio:").pack(side="left", padx=5)
+            entry_precio_modificable = ttk.Entry(frame_precio, width=10)
+            entry_precio_modificable.pack(side="left", padx=5)
+            # Pre-fill with current price for easy modification
+            entry_precio_modificable.insert(0, precio_str.replace('$', ''))
+            
+            ttk.Label(top, text="*Producto especial: puedes modificar el precio.", 
+                     font=("Arial", 8), foreground="red").pack(pady=2)
+
 
         # Frame para sección (si está habilitado)
         frame_seccion = ttk.Frame(top)
@@ -255,7 +285,9 @@ class ReciboAppMejorado:
             frame_botones, 
             text="Agregar", 
             command=lambda: self._confirmar_agregar_al_carrito(
-                producto_info, entry_cantidad.get(), combo_seccion, top, widgets
+                nombre_prod, entry_cantidad.get(), 
+                entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
+                combo_seccion, top, widgets
             )
         )
         btn_aceptar.pack(side="left", padx=5)
@@ -265,10 +297,19 @@ class ReciboAppMejorado:
         # Permitir agregar con Enter
         entry_cantidad.bind("<Return>", 
                           lambda e: self._confirmar_agregar_al_carrito(
-                              producto_info, entry_cantidad.get(), combo_seccion, top, widgets
+                              nombre_prod, entry_cantidad.get(), 
+                              entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
+                              combo_seccion, top, widgets
                           ))
+        if es_especial and entry_precio_modificable:
+            entry_precio_modificable.bind("<Return>", 
+                                        lambda e: self._confirmar_agregar_al_carrito(
+                                            nombre_prod, entry_cantidad.get(), 
+                                            entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str, # Pass potentially modified price
+                                            combo_seccion, top, widgets
+                                        ))
     
-    def _confirmar_agregar_al_carrito(self, producto_info, cantidad_str, combo_seccion, toplevel, widgets):
+    def _confirmar_agregar_al_carrito(self, nombre_prod, cantidad_str, precio_str_or_modified, combo_seccion, toplevel, widgets):
         """Confirma y agrega el producto al carrito"""
         try:
             cantidad = float(cantidad_str)
@@ -279,8 +320,15 @@ class ReciboAppMejorado:
                                "Introduce un número válido y positivo.", parent=toplevel)
             return
 
-        nombre_prod, precio_str = producto_info
-        precio_unit = float(precio_str.replace('$', ''))
+        try:
+            # Use the passed price string, which might be the original or modified
+            precio_unit = float(precio_str_or_modified.replace('$', '')) 
+            if precio_unit < 0:
+                raise ValueError("El precio no puede ser negativo.")
+        except ValueError:
+            messagebox.showerror("Precio Inválido", 
+                               "Introduce un precio válido y no negativo.", parent=toplevel)
+            return
         
         # Determinar sección si aplica
         seccion_id = None
@@ -472,15 +520,16 @@ class ReciboAppMejorado:
         for item in widgets['tree_resultados'].get_children(): 
             widgets['tree_resultados'].delete(item)
         
-        # Buscar productos
-        productos = database.buscar_productos_por_grupo(id_grupo, texto_busqueda)
+        # Modified: Pass the es_especial status along with product name and price
+        productos = database.buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda)
         
         if productos:
-            for nombre, precio in productos:
-                widgets['tree_resultados'].insert("", "end", values=(nombre, f"${precio:.2f}"))
+            for nombre, precio, es_especial in productos:
+                # Store es_especial as a hidden value in the treeview item
+                widgets['tree_resultados'].insert("", "end", values=(nombre, f"${precio:.2f}", es_especial))
         else:
             # Mostrar mensaje si no hay resultados
-            widgets['tree_resultados'].insert("", "end", values=("No se encontraron productos", ""))
+            widgets['tree_resultados'].insert("", "end", values=("No se encontraron productos", "", ""))
 
     def run(self):
         """Run the application main loop"""

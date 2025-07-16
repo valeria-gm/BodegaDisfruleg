@@ -95,7 +95,6 @@ def obtener_clientes_por_grupo(id_grupo):
 
 def buscar_productos_por_grupo(id_grupo, texto_busqueda):
     """
-
     Busca productos y obtiene su precio específico para un grupo de clientes.
     """
     conn = conectar()
@@ -116,6 +115,33 @@ def buscar_productos_por_grupo(id_grupo, texto_busqueda):
         productos = cursor.fetchall()
     except Error as e:
         print(f"Error al buscar productos: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+    return productos
+
+def buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda):
+    """
+    Busca productos y obtiene su precio específico para un grupo de clientes,
+    incluyendo si el producto es 'especial'.
+    """
+    conn = conectar()
+    if not conn: return []
+    
+    productos = []
+    cursor = conn.cursor()
+    try:
+        query = """
+            SELECT p.nombre_producto, ppg.precio_base, p.es_especial
+            FROM producto p
+            JOIN precio_por_grupo ppg ON p.id_producto = ppg.id_producto
+            WHERE ppg.id_grupo = %s AND p.nombre_producto LIKE %s AND p.stock > 0
+        """
+        valores = (id_grupo, f"%{texto_busqueda}%")
+        cursor.execute(query, valores)
+        productos = cursor.fetchall()
+    except Error as e:
+        print(f"Error al buscar productos con es_especial: {e}")
     finally:
         cursor.close()
         conn.close()
@@ -200,5 +226,9 @@ if __name__ == '__main__':
         print(f"\nBuscando productos para el grupo ID {id_grupo_prueba} que contengan 'a':")
         productos = buscar_productos_por_grupo(id_grupo_prueba, 'a')
         print(f"Productos encontrados: {productos}")
+
+        print(f"\nBuscando productos (con 'es_especial') para el grupo ID {id_grupo_prueba} que contengan 'e':")
+        productos_especiales = buscar_productos_por_grupo_con_especial(id_grupo_prueba, 'e')
+        print(f"Productos especiales encontrados: {productos_especiales}")
     else:
         print("No se encontraron grupos. Asegúrate de tener datos en la BD.")
