@@ -134,11 +134,35 @@ def launch_clients_module(user_data=None):
         messagebox.showerror("Error", f"No se pudo cargar el administrador de clientes: {str(e)}")
         print(f"Error launching clients module: {e}")
 
+def launch_users_module(user_data=None):
+    """Launch the user management module"""
+    try:
+        os.chdir(project_root)
+        from src.modules.users.user_manager import UserManagerApp
+        
+        root = tk.Tk()
+        
+        if user_data is None:
+            user_data = {
+                'nombre_completo': 'Usuario de Prueba',
+                'rol': 'admin',
+                'username': 'test'
+            }
+        
+        app = UserManagerApp(root, user_data)
+        root.mainloop()
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo cargar el administrador de usuarios: {str(e)}")
+        print(f"Error launching users module: {e}")
+        import traceback
+        traceback.print_exc()
+
 def main():
     """Main entry point when script is run directly"""
     if len(sys.argv) < 2:
         print("Usage: python launch_module.py <module_name>")
-        print("Available modules: receipts, pricing, inventory, analytics, clients")
+        print("Available modules: receipts, pricing, inventory, analytics, clients, users")
         sys.exit(1)
     
     module_name = sys.argv[1].lower()
@@ -163,9 +187,11 @@ def main():
         launch_analytics_module(user_data)
     elif module_name == "clients":
         launch_clients_module(user_data)
+    elif module_name == "users":
+        launch_users_module(user_data)
     else:
         print(f"Unknown module: {module_name}")
-        print("Available modules: receipts, pricing, inventory, analytics, clients")
+        print("Available modules: receipts, pricing, inventory, analytics, clients, users")
         sys.exit(1)
 
 if __name__ == "__main__":

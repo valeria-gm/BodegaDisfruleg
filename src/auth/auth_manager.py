@@ -319,3 +319,153 @@ class AuthManager:
         except Exception as e:
             print(f"Error getting user info: {e}")
             return None
+    
+    def get_user_info_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Obtener información del usuario por ID"""
+        try:
+            conn = self._get_admin_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            cursor.execute("""
+                SELECT id_usuario, username, nombre_completo, rol, activo, ultimo_acceso
+                FROM usuarios_sistema 
+                WHERE id_usuario = %s
+            """, (user_id,))
+            
+            user = cursor.fetchone()
+            conn.close()
+            
+            return user
+            
+        except Exception as e:
+            print(f"Error getting user info by ID: {e}")
+            return None
+    
+    def create_user(self, username: str, password: str, nombre_completo: str, rol: str = 'usuario') -> Dict[str, Any]:
+        """Crear nuevo usuario"""
+        try:
+            # Validar datos de entrada
+            if not username or not password or not nombre_completo:
+                return {
+                    'success': False,
+                    'message': 'Todos los campos son requeridos'
+                }
+            
+            if len(password) < 8:
+                return {
+                    'success': False,
+                    'message': 'La contraseña debe tener al menos 8 caracteres'
+                }
+            
+            if rol not in ['admin', 'usuario']:
+                return {
+                    'success': False,
+                    'message': 'Rol inválido'
+                }
+            
+            # Verificar si el usuario ya existe
+            conn = self._get_admin_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT username FROM usuarios_sistema WHERE username = %s", (username,))
+            if cursor.fetchone():
+                conn.close()
+                return {
+                    'success': False,
+                    'message': f'El usuario "{username}" ya existe'
+                }
+            
+            # Generar hash de contraseña
+            password_hash = self._hash_password(password)
+            
+            # Insertar nuevo usuario
+            cursor.execute("""
+                INSERT INTO usuarios_sistema (username, password_hash, nombre_completo, rol, activo)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (username, password_hash, nombre_completo, rol, True))
+            
+            conn.commit()
+            conn.close()
+            
+            self._log_access_attempt(username, True, f"Usuario creado por administrador")
+            
+            return {
+                'success': True,
+                'message': f'Usuario "{username}" creado exitosamente'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error al crear usuario: {str(e)}'
+            }
+    
+    def update_user(self, username: str, nombre_completo: str, rol: str, activo: bool, new_password: str = None) -> Dict[str, Any]:
+        """Actualizar usuario existente"""
+        try:
+            # Validar datos de entrada
+            if not username or not nombre_completo:
+                return {
+                    'success': False,
+                    'message': 'Username y nombre completo son requeridos'
+                }
+            
+            if rol not in ['admin', 'usuario']:
+                return {
+                    'success': False,
+                    'message': 'Rol inválido'
+                }
+            
+            conn = self._get_admin_connection()
+            cursor = conn.cursor()
+            
+            # Verificar que el usuario existe
+            cursor.execute("SELECT id_usuario FROM usuarios_sistema WHERE username = %s", (username,))
+            if not cursor.fetchone():
+                conn.close()
+                return {
+                    'success': False,
+                    'message': f'El usuario "{username}" no existe'
+                }
+            
+            # Actualizar usuario
+            if new_password:
+                if len(new_password) < 8:
+                    conn.close()
+                    return {
+                        'success': False,
+                        'message': 'La nueva contraseña debe tener al menos 8 caracteres'
+                    }
+                
+                password_hash = self._hash_password(new_password)
+                cursor.execute("""
+                    UPDATE usuarios_sistema 
+                    SET nombre_completo = %s, rol = %s, activo = %s, password_hash = %s
+                    WHERE username = %s
+                """, (nombre_completo, rol, activo, password_hash, username))
+            else:
+                cursor.execute("""
+                    UPDATE usuarios_sistema 
+                    SET nombre_completo = %s, rol = %s, activo = %s
+                    WHERE username = %s
+                """, (nombre_completo, rol, activo, username))
+            
+            conn.commit()
+            conn.close()
+            
+            action_detail = "Usuario actualizado por administrador"
+            if new_password:
+                action_detail += " (contraseña cambiada)"
+            
+            self._log_access_attempt(username, True, action_detail)
+            
+            return {
+                'success': True,
+                'message': f'Usuario "{username}" actualizado exitosamente'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error al actualizar usuario: {str(e)}'
+            }

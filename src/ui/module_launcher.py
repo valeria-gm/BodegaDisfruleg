@@ -48,7 +48,7 @@ class ModuleLauncher:
                 'module_key': 'analytics',
                 'bg_color': '#9B59B6',
                 'hover_color': '#8E44AD',
-                'requires_admin': False
+                'requires_admin': True
             },
             {
                 'title': 'Administrar Clientes',
@@ -56,6 +56,14 @@ class ModuleLauncher:
                 'module_key': 'clients',
                 'bg_color': '#F39C12',
                 'hover_color': '#E67E22',
+                'requires_admin': True
+            },
+            {
+                'title': 'Administrar Usuarios',
+                'description': 'Gestionar usuarios del sistema\ny permisos de acceso',
+                'module_key': 'users',
+                'bg_color': '#34495E',
+                'hover_color': '#2C3E50',
                 'requires_admin': True
             }
         ]
