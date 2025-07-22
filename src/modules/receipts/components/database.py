@@ -9,8 +9,8 @@ import bcrypt # Para el manejo seguro de contraseñas
 # !! Asegúrate de que estos valores son correctos.
 db_config = {
     'host': 'localhost',
-    'user': 'root',
-    'password': 'root', # La contraseña de tu usuario de MySQL
+    'user': 'jared',
+    'password': 'zoibnG31!!EAEA', # La contraseña de tu usuario de MySQL
     'database': 'disfruleg'
 }
 
