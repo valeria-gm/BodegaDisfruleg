@@ -4,3 +4,4 @@ fpdf
 mysql-connector-python
 Pillow
 bcrypt
+openpyxl

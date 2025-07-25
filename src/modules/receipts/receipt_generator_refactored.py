@@ -452,31 +452,55 @@ class ReciboAppMejorado:
                     for datos_seccion in secciones_con_datos.values():
                         items_simple.extend(datos_seccion['items'])
                     
-                    id_factura = database.crear_factura_completa(id_cliente, items_simple)
+                    resultado_factura = database.crear_factura_completa(id_cliente, items_simple)
                     
-                    # Generar PDF con secciones
-                    ruta_pdf = generador_pdf.crear_recibo_con_secciones(
-                        nombre_cliente, secciones_con_datos, total
-                    )
+                    if resultado_factura:
+                        id_factura = resultado_factura['id_factura']
+                        folio_numero = resultado_factura['folio_numero']
+                        
+                        # Generar PDF con secciones y folio
+                        ruta_pdf = generador_pdf.crear_recibo_con_secciones(
+                            nombre_cliente, secciones_con_datos, total, folio_numero
+                        )
+                    else:
+                        id_factura = None
+                        ruta_pdf = None
                 else:
                     # Solo una sección con datos, usar formato simple
                     items_carrito = carrito.obtener_items()
-                    id_factura = database.crear_factura_completa(id_cliente, items_carrito)
-                    ruta_pdf = generador_pdf.crear_recibo_simple(
-                        nombre_cliente, items_carrito, f"${total:.2f}"
-                    )
+                    resultado_factura = database.crear_factura_completa(id_cliente, items_carrito)
+                    
+                    if resultado_factura:
+                        id_factura = resultado_factura['id_factura']
+                        folio_numero = resultado_factura['folio_numero']
+                        
+                        ruta_pdf = generador_pdf.crear_recibo_simple(
+                            nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
+                        )
+                    else:
+                        id_factura = None
+                        ruta_pdf = None
             else:
                 # Generar recibo simple
                 items_carrito = carrito.obtener_items()
-                id_factura = database.crear_factura_completa(id_cliente, items_carrito)
-                ruta_pdf = generador_pdf.crear_recibo_simple(
-                    nombre_cliente, items_carrito, f"${total:.2f}"
-                )
+                resultado_factura = database.crear_factura_completa(id_cliente, items_carrito)
+                
+                if resultado_factura:
+                    id_factura = resultado_factura['id_factura']
+                    folio_numero = resultado_factura['folio_numero']
+                    
+                    ruta_pdf = generador_pdf.crear_recibo_simple(
+                        nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
+                    )
+                else:
+                    id_factura = None
+                    ruta_pdf = None
             
             if id_factura and ruta_pdf:
                 messagebox.showinfo("Éxito", 
                                   f"Venta registrada exitosamente!\n\n"
                                   f"Factura ID: {id_factura}\n"
+                                  f"Folio: {folio_numero:06d}\n"
                                   f"PDF guardado en: {ruta_pdf}")
                 
                 # Limpiar carrito

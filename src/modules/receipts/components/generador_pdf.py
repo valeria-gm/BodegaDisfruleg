@@ -17,7 +17,7 @@ def crear_recibo(nombre_restaurante, items_carrito, total_str):
     """
     return crear_recibo_simple(nombre_restaurante, items_carrito, total_str)
 
-def crear_recibo_simple(nombre_restaurante, items_carrito, total_str):
+def crear_recibo_simple(nombre_restaurante, items_carrito, total_str, folio_numero=None):
     """
     Crea un recibo PDF simple (sin secciones) - mantiene compatibilidad.
     """
@@ -27,7 +27,8 @@ def crear_recibo_simple(nombre_restaurante, items_carrito, total_str):
 
         # 2. Generar un nombre de archivo único
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre_archivo = f"Recibo_{nombre_restaurante.replace(' ', '_')}_{timestamp}.pdf"
+        folio_suffix = f"_Folio_{folio_numero}" if folio_numero else ""
+        nombre_archivo = f"Recibo_{nombre_restaurante.replace(' ', '_')}_{timestamp}{folio_suffix}.pdf"
         ruta_archivo = os.path.join(DIRECTORIO_RECIBOS, nombre_archivo)
 
         # 3. Configurar el documento PDF
@@ -36,9 +37,29 @@ def crear_recibo_simple(nombre_restaurante, items_carrito, total_str):
         styles = getSampleStyleSheet()
 
         # 4. Construir el contenido del PDF
-        # Título principal
-        story.append(Paragraph("Bodega de Insumos 'Disfruleg'", styles['h1']))
-        story.append(Paragraph(f"Fecha y Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles['Normal']))
+        # Header con título y folio
+        if folio_numero:
+            # Crear tabla para header con folio en esquina superior derecha
+            header_data = [["Bodega de Insumos 'Disfruleg'", f"FOLIO: {folio_numero:06d}"]]
+            header_table = Table(header_data, colWidths=[400, 150])
+            header_style = TableStyle([
+                ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+                ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (0, 0), 18),
+                ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (1, 0), (1, 0), 14),
+                ('TEXTCOLOR', (1, 0), (1, 0), colors.red),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ])
+            header_table.setStyle(header_style)
+            story.append(header_table)
+        else:
+            # Título principal sin folio
+            story.append(Paragraph("Bodega de Insumos 'Disfruleg'", styles['h1']))
+        
+        story.append(Paragraph(f"Fecha: {datetime.now().strftime('%d/%m/%Y')}", styles['Normal']))
         story.append(Spacer(1, 24))
 
         # Información del cliente
@@ -87,7 +108,7 @@ def crear_recibo_simple(nombre_restaurante, items_carrito, total_str):
         print(f"Error al generar el PDF: {e}")
         return None
 
-def crear_recibo_con_secciones(nombre_restaurante, items_por_seccion, total_general):
+def crear_recibo_con_secciones(nombre_restaurante, items_por_seccion, total_general, folio_numero=None):
     """
     Crea un recibo PDF con secciones organizadas.
     
@@ -100,6 +121,7 @@ def crear_recibo_con_secciones(nombre_restaurante, items_por_seccion, total_gene
             }
         }
     :param total_general: Total general de todas las secciones
+    :param folio_numero: Número de folio del recibo
     :return: Ruta del archivo PDF creado o None si hay error
     """
     try:
@@ -108,7 +130,8 @@ def crear_recibo_con_secciones(nombre_restaurante, items_por_seccion, total_gene
 
         # 2. Generar un nombre de archivo único
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre_archivo = f"Recibo_Seccionado_{nombre_restaurante.replace(' ', '_')}_{timestamp}.pdf"
+        folio_suffix = f"_Folio_{folio_numero}" if folio_numero else ""
+        nombre_archivo = f"Recibo_Seccionado_{nombre_restaurante.replace(' ', '_')}_{timestamp}{folio_suffix}.pdf"
         ruta_archivo = os.path.join(DIRECTORIO_RECIBOS, nombre_archivo)
 
         # 3. Configurar el documento PDF
@@ -117,9 +140,29 @@ def crear_recibo_con_secciones(nombre_restaurante, items_por_seccion, total_gene
         styles = getSampleStyleSheet()
 
         # 4. Construir el contenido del PDF
-        # Título principal
-        story.append(Paragraph("Bodega de Insumos 'Gemini'", styles['h1']))
-        story.append(Paragraph(f"Fecha y Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles['Normal']))
+        # Header con título y folio
+        if folio_numero:
+            # Crear tabla para header con folio en esquina superior derecha
+            header_data = [["Bodega de Insumos 'Disfruleg'", f"FOLIO: {folio_numero:06d}"]]
+            header_table = Table(header_data, colWidths=[400, 150])
+            header_style = TableStyle([
+                ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+                ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (0, 0), 18),
+                ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (1, 0), (1, 0), 14),
+                ('TEXTCOLOR', (1, 0), (1, 0), colors.red),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ])
+            header_table.setStyle(header_style)
+            story.append(header_table)
+        else:
+            # Título principal sin folio
+            story.append(Paragraph("Bodega de Insumos 'Disfruleg'", styles['h1']))
+        
+        story.append(Paragraph(f"Fecha: {datetime.now().strftime('%d/%m/%Y')}", styles['Normal']))
         story.append(Spacer(1, 24))
 
         # Información del cliente

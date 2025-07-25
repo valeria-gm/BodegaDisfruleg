@@ -147,29 +147,108 @@ def buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda):
         conn.close()
     return productos
 
-# --- Funciones de Facturación ---
+# --- Funciones de Numeración de Folios ---
 
-def crear_factura_completa(id_cliente, items_carrito):
+def obtener_siguiente_folio():
     """
-    Crea una transacción completa: factura, detalles, deuda y actualiza stock.
-    Retorna el ID de la nueva factura o None si falla.
+    Obtiene el siguiente número de folio disponible.
+    Retorna un número de folio único e incremental.
     """
     conn = conectar()
     if not conn: return None
     
     cursor = conn.cursor()
+    siguiente_folio = None
+    
+    try:
+        # Obtener el último número de folio usado
+        query = "SELECT MAX(folio_numero) FROM factura WHERE folio_numero IS NOT NULL"
+        cursor.execute(query)
+        resultado = cursor.fetchone()
+        
+        ultimo_folio = resultado[0] if resultado[0] is not None else 0
+        siguiente_folio = ultimo_folio + 1
+        
+    except Error as e:
+        print(f"Error al obtener siguiente folio: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+    
+    return siguiente_folio
+
+def verificar_columna_folio():
+    """
+    Verifica si la columna folio_numero existe en la tabla factura.
+    Si no existe, la crea.
+    """
+    conn = conectar()
+    if not conn: return False
+    
+    cursor = conn.cursor()
+    
+    try:
+        # Verificar si la columna existe
+        query = """
+            SELECT COUNT(*) 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = 'disfruleg' 
+            AND TABLE_NAME = 'factura' 
+            AND COLUMN_NAME = 'folio_numero'
+        """
+        cursor.execute(query)
+        existe = cursor.fetchone()[0] > 0
+        
+        if not existe:
+            # Crear la columna si no existe
+            alter_query = "ALTER TABLE factura ADD COLUMN folio_numero INT UNIQUE"
+            cursor.execute(alter_query)
+            conn.commit()
+            print("Columna folio_numero creada exitosamente")
+            
+        return True
+        
+    except Error as e:
+        print(f"Error al verificar/crear columna folio: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+# --- Funciones de Facturación ---
+
+def crear_factura_completa(id_cliente, items_carrito):
+    """
+    Crea una transacción completa: factura, detalles, deuda y actualiza stock.
+    Retorna un diccionario con el ID de la nueva factura y el número de folio.
+    """
+    conn = conectar()
+    if not conn: return None
+    
+    # Verificar que existe la columna folio_numero
+    if not verificar_columna_folio():
+        print("Error: No se pudo verificar/crear la columna folio_numero")
+        return None
+    
+    cursor = conn.cursor()
     id_factura_nueva = None
+    folio_numero = None
     
     try:
         # Iniciar una transacción para asegurar que todas las operaciones se completen
         conn.start_transaction()
 
-        # 1. Crear la factura
-        query_factura = "INSERT INTO factura (fecha_factura, id_cliente) VALUES (CURDATE(), %s)"
-        cursor.execute(query_factura, (id_cliente,))
+        # 1. Obtener el siguiente número de folio
+        folio_numero = obtener_siguiente_folio()
+        if folio_numero is None:
+            raise Error("No se pudo obtener el número de folio")
+
+        # 2. Crear la factura con número de folio
+        query_factura = "INSERT INTO factura (fecha_factura, id_cliente, folio_numero) VALUES (CURDATE(), %s, %s)"
+        cursor.execute(query_factura, (id_cliente, folio_numero))
         id_factura_nueva = cursor.lastrowid # Obtener el ID de la factura recién creada
 
-        # 2. Insertar cada producto en detalle_factura y actualizar stock
+        # 3. Insertar cada producto en detalle_factura y actualizar stock
         monto_total = 0.0
         query_detalle = """
             INSERT INTO detalle_factura (id_factura, id_producto, cantidad_factura, precio_unitario_venta)
@@ -188,7 +267,7 @@ def crear_factura_completa(id_cliente, items_carrito):
             
             monto_total += float(subtotal_str.replace('$', ''))
 
-        # 3. Crear la deuda asociada a la factura
+        # 4. Crear la deuda asociada a la factura
         query_deuda = "INSERT INTO deuda (id_cliente, id_factura, monto, fecha_generada) VALUES (%s, %s, %s, CURDATE())"
         cursor.execute(query_deuda, (id_cliente, id_factura_nueva, monto_total))
         
@@ -200,11 +279,15 @@ def crear_factura_completa(id_cliente, items_carrito):
         # Si algo falla, revertir todos los cambios
         conn.rollback()
         id_factura_nueva = None
+        folio_numero = None
     finally:
         cursor.close()
         conn.close()
         
-    return id_factura_nueva
+    return {
+        'id_factura': id_factura_nueva,
+        'folio_numero': folio_numero
+    } if id_factura_nueva else None
 
 
 # --- BLOQUE DE PRUEBA ---
