@@ -180,9 +180,17 @@ class ReciboAppMejorado:
         )
         widgets['btn_generar_excel'].pack(side="left", padx=(0, 10))
         
+        # *** NUEVO BOTÓN PARA GENERAR SOLO PDF ***
+        widgets['btn_generar_pdf'] = ttk.Button(
+            frame_botones, 
+            text="📄 Generar PDF",
+            command=lambda w=widgets: self._generar_pdf_solo(w)
+        )
+        widgets['btn_generar_pdf'].pack(side="left", padx=(0, 10))
+        
         widgets['btn_procesar_venta'] = ttk.Button(
             frame_botones, 
-            text="✅ Registrar Venta y Generar Recibo",
+            text="✅ Registrar Venta",
             style="Accent.TButton"
         )
         widgets['btn_procesar_venta'].pack(side="right")
@@ -415,9 +423,65 @@ class ReciboAppMejorado:
             except Exception as e:
                 messagebox.showerror("Error", f"Error al generar Excel: {str(e)}")
 
+    def _generar_pdf_solo(self, widgets):
+        """Genera solo el PDF sin registrar la venta en la base de datos"""
+        nombre_cliente = widgets['combo_clientes'].get()
+        if not nombre_cliente:
+            messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
+            return
+
+        carrito = widgets['carrito_obj']
+        if not carrito.items:
+            messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
+            return
+        
+        total = carrito.obtener_total()
+        
+        if not messagebox.askyesno("Generar PDF", 
+                                  f"¿Generar PDF para '{nombre_cliente}' sin registrar la venta?\n\n"
+                                  f"Total: ${total:.2f}"):
+            return
+
+        try:
+            # Decidir qué tipo de recibo generar
+            if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                # Generar recibo con secciones
+                items_por_seccion = carrito.obtener_items_por_seccion()
+                
+                # Verificar que realmente hay múltiples secciones con datos
+                secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
+                
+                if len(secciones_con_datos) > 1:
+                    # Generar PDF con secciones (sin folio)
+                    ruta_pdf = generador_pdf.crear_recibo_con_secciones(
+                        nombre_cliente, secciones_con_datos, total, folio_numero=None
+                    )
+                else:
+                    # Solo una sección con datos, usar formato simple
+                    items_carrito = carrito.obtener_items()
+                    ruta_pdf = generador_pdf.crear_recibo_simple(
+                        nombre_cliente, items_carrito, f"${total:.2f}", folio_numero=None
+                    )
+            else:
+                # Generar recibo simple (sin folio)
+                items_carrito = carrito.obtener_items()
+                ruta_pdf = generador_pdf.crear_recibo_simple(
+                    nombre_cliente, items_carrito, f"${total:.2f}", folio_numero=None
+                )
+            
+            if ruta_pdf:
+                messagebox.showinfo("PDF Generado", 
+                                  f"PDF generado exitosamente!\n\n"
+                                  f"Guardado en: {ruta_pdf}\n\n"
+                                  f"Nota: Esta venta NO ha sido registrada en la base de datos.")
+            else:
+                messagebox.showerror("Error", "No se pudo generar el PDF.")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al generar PDF: {str(e)}")
 
     def _procesar_venta(self, widgets):
-        """Procesa la venta y genera el recibo"""
+        """Registra la venta en la base de datos y opcionalmente genera PDF"""
         nombre_cliente = widgets['combo_clientes'].get()
         if not nombre_cliente:
             messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
@@ -438,12 +502,9 @@ class ReciboAppMejorado:
         try:
             id_cliente = widgets['clientes_map'][nombre_cliente]
             
-            # Decidir qué tipo de recibo generar
+            # Preparar items para registrar en BD
             if carrito.sectioning_enabled and len(carrito.secciones) > 1:
-                # Generar recibo con secciones
                 items_por_seccion = carrito.obtener_items_por_seccion()
-                
-                # Verificar que realmente hay múltiples secciones con datos
                 secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
                 
                 if len(secciones_con_datos) > 1:
@@ -451,62 +512,57 @@ class ReciboAppMejorado:
                     items_simple = []
                     for datos_seccion in secciones_con_datos.values():
                         items_simple.extend(datos_seccion['items'])
-                    
-                    resultado_factura = database.crear_factura_completa(id_cliente, items_simple)
-                    
-                    if resultado_factura:
-                        id_factura = resultado_factura['id_factura']
-                        folio_numero = resultado_factura['folio_numero']
-                        
-                        # Generar PDF con secciones y folio
-                        ruta_pdf = generador_pdf.crear_recibo_con_secciones(
-                            nombre_cliente, secciones_con_datos, total, folio_numero
-                        )
-                    else:
-                        id_factura = None
-                        ruta_pdf = None
+                    items_carrito = items_simple
                 else:
-                    # Solo una sección con datos, usar formato simple
                     items_carrito = carrito.obtener_items()
-                    resultado_factura = database.crear_factura_completa(id_cliente, items_carrito)
-                    
-                    if resultado_factura:
-                        id_factura = resultado_factura['id_factura']
-                        folio_numero = resultado_factura['folio_numero']
+            else:
+                items_carrito = carrito.obtener_items()
+            
+            # Registrar venta en base de datos
+            resultado_factura = database.crear_factura_completa(id_cliente, items_carrito)
+            
+            if resultado_factura:
+                id_factura = resultado_factura['id_factura']
+                folio_numero = resultado_factura['folio_numero']
+                
+                # Preguntar si también quiere generar PDF
+                generar_pdf = messagebox.askyesno("Generar PDF", 
+                                                f"Venta registrada exitosamente!\n\n"
+                                                f"Factura ID: {id_factura}\n"
+                                                f"Folio: {folio_numero:06d}\n\n"
+                                                f"¿Desea generar también el PDF del recibo?")
+                
+                ruta_pdf = None
+                if generar_pdf:
+                    # Generar PDF con el folio asignado
+                    if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                        items_por_seccion = carrito.obtener_items_por_seccion()
+                        secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
                         
+                        if len(secciones_con_datos) > 1:
+                            ruta_pdf = generador_pdf.crear_recibo_con_secciones(
+                                nombre_cliente, secciones_con_datos, total, folio_numero
+                            )
+                        else:
+                            ruta_pdf = generador_pdf.crear_recibo_simple(
+                                nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
+                            )
+                    else:
                         ruta_pdf = generador_pdf.crear_recibo_simple(
                             nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
                         )
-                    else:
-                        id_factura = None
-                        ruta_pdf = None
-            else:
-                # Generar recibo simple
-                items_carrito = carrito.obtener_items()
-                resultado_factura = database.crear_factura_completa(id_cliente, items_carrito)
                 
-                if resultado_factura:
-                    id_factura = resultado_factura['id_factura']
-                    folio_numero = resultado_factura['folio_numero']
-                    
-                    ruta_pdf = generador_pdf.crear_recibo_simple(
-                        nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
-                    )
-                else:
-                    id_factura = None
-                    ruta_pdf = None
-            
-            if id_factura and ruta_pdf:
-                messagebox.showinfo("Éxito", 
-                                  f"Venta registrada exitosamente!\n\n"
-                                  f"Factura ID: {id_factura}\n"
-                                  f"Folio: {folio_numero:06d}\n"
-                                  f"PDF guardado en: {ruta_pdf}")
+                # Mostrar mensaje final
+                mensaje_final = f"Venta registrada exitosamente!\n\nFactura ID: {id_factura}\nFolio: {folio_numero:06d}"
+                if ruta_pdf:
+                    mensaje_final += f"\nPDF guardado en: {ruta_pdf}"
+                
+                messagebox.showinfo("Éxito", mensaje_final)
                 
                 # Limpiar carrito
                 carrito.limpiar_carrito()
             else:
-                messagebox.showerror("Error", "No se pudo completar la transacción.")
+                messagebox.showerror("Error", "No se pudo registrar la venta en la base de datos.")
                 
         except Exception as e:
             messagebox.showerror("Error", f"Error al procesar la venta: {str(e)}")
