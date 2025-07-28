@@ -15,17 +15,15 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
 def launch_receipts_module(user_data=None):
-    """Launch the receipts generator module"""
+    """Launch the receipts module with VentanaOrdenes as the main hub"""
     try:
         # Change to project root directory
         os.chdir(project_root)
         
-        # Import the refactored receipts module
+        # Import required modules
+        from src.modules.receipts.components.ventana_ordenes import abrir_ventana_ordenes
         from src.modules.receipts.receipt_generator_refactored import ReciboAppMejorado
-        print("✅ Using ReciboAppMejorado module")
-        
-        # Create main window
-        root = tk.Tk()
+        print("✅ Using VentanaOrdenes as main hub with ReciboAppMejorado integration")
         
         # Default user data if none provided
         if user_data is None:
@@ -35,9 +33,100 @@ def launch_receipts_module(user_data=None):
                 'username': 'test'
             }
         
-        # Launch the application
-        app = ReciboAppMejorado(root, user_data)
-        root.mainloop()
+        # Keep track of editor instances for proper window management
+        editor_instances = []
+        ventana_ordenes = None  # Reference to main orders window
+        
+        def callback_nueva_orden():
+            """Callback to create a new order - opens ReciboAppMejorado without folio"""
+            try:
+                # Create new editor window as Toplevel (allows multiple editors)
+                editor_root = tk.Toplevel()
+                editor_root.title("Disfruleg - Nueva Orden")
+                editor_root.geometry("1100x750")
+                
+                # Function to handle window closing and refresh
+                def on_editor_close():
+                    editor_root.destroy()
+                    # Force refresh of orders window after a short delay
+                    if ventana_ordenes:
+                        editor_root.after(100, ventana_ordenes.forzar_actualizacion)
+                
+                # Create editor app instance
+                editor_app = ReciboAppMejorado(editor_root, user_data, orden_folio=None)
+                editor_instances.append(editor_app)
+                
+                # Configure window properties
+                editor_root.transient()  # Stay on top of main window
+                editor_root.focus_set()  # Give focus to new window
+                editor_root.protocol("WM_DELETE_WINDOW", on_editor_close)
+                
+                # Bind event for order changes
+                def on_orden_cambiada(event):
+                    if ventana_ordenes:
+                        ventana_ordenes.forzar_actualizacion()
+                        print("📨 Evento OrdenCambiada recibido - actualizando lista")
+                
+                editor_root.bind("<<OrdenCambiada>>", on_orden_cambiada)
+                
+                print(f"✅ Nueva orden creada - Editor instancia #{len(editor_instances)}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al crear nueva orden: {str(e)}")
+                print(f"Error creating new order: {e}")
+        
+        def callback_editar_orden(folio):
+            """Callback to edit existing order - opens ReciboAppMejorado with specific folio"""
+            try:
+                # Create editor window for specific order
+                editor_root = tk.Toplevel()
+                editor_root.title(f"Disfruleg - Editando Orden {folio:06d}")
+                editor_root.geometry("1100x750")
+                
+                # Function to handle window closing and refresh
+                def on_editor_close():
+                    editor_root.destroy()
+                    # Force refresh of orders window after a short delay
+                    if ventana_ordenes:
+                        root.after(100, ventana_ordenes.forzar_actualizacion)
+                
+                # Create editor app instance
+                editor_app = ReciboAppMejorado(editor_root, user_data, orden_folio=folio)
+                editor_instances.append(editor_app)
+                
+                # Configure window properties
+                editor_root.transient()  # Stay on top of main window
+                editor_root.focus_set()  # Give focus to new window
+                editor_root.protocol("WM_DELETE_WINDOW", on_editor_close)
+                
+                # Bind event for order changes
+                def on_orden_cambiada(event):
+                    if ventana_ordenes:
+                        ventana_ordenes.forzar_actualizacion()
+                        print("📨 Evento OrdenCambiada recibido - actualizando lista")
+                
+                editor_root.bind("<<OrdenCambiada>>", on_orden_cambiada)
+                
+                print(f"✅ Editando orden {folio:06d} - Editor instancia #{len(editor_instances)}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al editar orden {folio}: {str(e)}")
+                print(f"Error editing order {folio}: {e}")
+        
+        # Create root window first to avoid tkinter initialization issues
+        root = tk.Tk()
+        root.withdraw()  # Hide the root window since VentanaOrdenes will be the main interface
+        
+        # Launch VentanaOrdenes as the main hub
+        ventana_ordenes = abrir_ventana_ordenes(
+            parent=None,  # Main window, not child
+            user_data=user_data,
+            on_nueva_orden=callback_nueva_orden,
+            on_editar_orden=callback_editar_orden
+        )
+        
+        # Start the main event loop
+        ventana_ordenes.show()
         
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo cargar el módulo de recibos: {str(e)}")
