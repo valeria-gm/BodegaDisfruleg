@@ -147,11 +147,30 @@ def buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda):
         conn.close()
     return productos
 
+def obtener_producto_por_nombre(nombre_producto):
+    """Obtiene información completa de un producto por su nombre."""
+    conn = conectar()
+    if not conn: return None
+    
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = "SELECT * FROM producto WHERE nombre_producto = %s"
+        cursor.execute(query, (nombre_producto,))
+        producto = cursor.fetchone()
+        return producto
+    except Error as e:
+        print(f"Error al obtener producto: {e}")
+        return None
+    finally:
+        cursor.close()
+        conn.close()
+
+
 # --- Funciones de Numeración de Folios ---
 
 def obtener_siguiente_folio():
     """
-    Obtiene el siguiente número de folio disponible.
+    Obtiene el siguiente número de folio disponible usando la secuencia.
     Retorna un número de folio único e incremental.
     """
     conn = conectar()
@@ -161,133 +180,351 @@ def obtener_siguiente_folio():
     siguiente_folio = None
     
     try:
-        # Obtener el último número de folio usado
-        query = "SELECT MAX(folio_numero) FROM factura WHERE folio_numero IS NOT NULL"
-        cursor.execute(query)
+        # Usar la tabla de secuencia para obtener el siguiente folio
+        cursor.execute("SELECT next_val FROM folio_sequence WHERE id = 1 FOR UPDATE")
         resultado = cursor.fetchone()
         
-        ultimo_folio = resultado[0] if resultado[0] is not None else 0
-        siguiente_folio = ultimo_folio + 1
+        if resultado:
+            siguiente_folio = resultado[0]
+            # Actualizar la secuencia
+            cursor.execute("UPDATE folio_sequence SET next_val = next_val + 1 WHERE id = 1")
+            conn.commit()
+        else:
+            # Inicializar la secuencia si no existe
+            cursor.execute("INSERT INTO folio_sequence (id, next_val) VALUES (1, 2)")
+            siguiente_folio = 1
+            conn.commit()
         
     except Error as e:
         print(f"Error al obtener siguiente folio: {e}")
+        conn.rollback()
     finally:
         cursor.close()
-        conn.close()
     
     return siguiente_folio
 
-def verificar_columna_folio():
+def verificar_folio_disponible(folio):
     """
-    Verifica si la columna folio_numero existe en la tabla factura.
-    Si no existe, la crea.
+    Verifica si un folio específico está disponible para usar.
+    
+    En el diseño actual:
+    - Las facturas usan id_factura (AUTO_INCREMENT) como identificador único
+    - Las órdenes guardadas usan folio_numero para reservar números secuenciales
+    - Un folio está disponible si no existe una factura con ese ID 
+      Y no hay una orden activa que lo reserve
+    
+    Args:
+        folio (int): Número de folio a verificar
+        
+    Returns:
+        bool: True si está disponible, False si está ocupado
     """
     conn = conectar()
-    if not conn: return False
+    if not conn: 
+        return False
     
     cursor = conn.cursor()
     
     try:
-        # Verificar si la columna existe
-        query = """
-            SELECT COUNT(*) 
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_SCHEMA = 'disfruleg' 
-            AND TABLE_NAME = 'factura' 
-            AND COLUMN_NAME = 'folio_numero'
-        """
-        cursor.execute(query)
-        existe = cursor.fetchone()[0] > 0
+        # Verificar si existe factura con ese ID
+        # En nuestro diseño, id_factura actúa como el folio oficial
+        query_factura = "SELECT COUNT(*) FROM factura WHERE id_factura = %s"
+        cursor.execute(query_factura, (folio,))
+        count_factura = cursor.fetchone()[0]
         
-        if not existe:
-            # Crear la columna si no existe
-            alter_query = "ALTER TABLE factura ADD COLUMN folio_numero INT UNIQUE"
-            cursor.execute(alter_query)
-            conn.commit()
-            print("Columna folio_numero creada exitosamente")
-            
-        return True
+        # Verificar si hay órdenes activas que reserven ese folio
+        query_orden = """
+            SELECT COUNT(*) FROM ordenes_guardadas 
+            WHERE folio_numero = %s AND activo = TRUE
+        """
+        cursor.execute(query_orden, (folio,))
+        count_orden = cursor.fetchone()[0]
+        
+        # El folio está disponible si no está usado en ninguna tabla
+        disponible = (count_factura + count_orden) == 0
+        
+        return disponible
         
     except Error as e:
-        print(f"Error al verificar/crear columna folio: {e}")
+        print(f"Error al verificar disponibilidad del folio {folio}: {e}")
         return False
+    finally:
+        cursor.close()
+        conn.close()
+
+def verificar_rango_folios_disponibles(inicio, fin):
+    """
+    Verifica un rango de folios para encontrar el primero disponible.
+    Útil cuando necesitas encontrar gaps en la secuencia.
+    
+    Args:
+        inicio (int): Folio inicial del rango
+        fin (int): Folio final del rango
+        
+    Returns:
+        int or None: Primer folio disponible en el rango, None si no hay ninguno
+    """
+    for folio in range(inicio, fin + 1):
+        if verificar_folio_disponible(folio):
+            return folio
+    return None
+
+def obtener_folios_ocupados(limite=100):
+    """
+    Obtiene una lista de todos los folios actualmente ocupados.
+    Útil para diagnóstico y debugging.
+    
+    Args:
+        limite (int): Máximo número de folios a verificar
+        
+    Returns:
+        dict: {'facturas': [list], 'ordenes': [list], 'todos': [list]}
+    """
+    conn = conectar()
+    if not conn:
+        return {'facturas': [], 'ordenes': [], 'todos': []}
+    
+    cursor = conn.cursor()
+    folios_ocupados = {'facturas': [], 'ordenes': [], 'todos': []}
+    
+    try:
+        # Obtener folios usados en facturas
+        cursor.execute("SELECT id_factura FROM factura ORDER BY id_factura")
+        facturas = [row[0] for row in cursor.fetchall()]
+        
+        # Obtener folios reservados en órdenes activas
+        cursor.execute("""
+            SELECT folio_numero FROM ordenes_guardadas 
+            WHERE activo = TRUE 
+            ORDER BY folio_numero
+        """)
+        ordenes = [row[0] for row in cursor.fetchall()]
+        
+        # Combinar y eliminar duplicados
+        todos = sorted(set(facturas + ordenes))
+        
+        folios_ocupados = {
+            'facturas': facturas,
+            'ordenes': ordenes,
+            'todos': todos
+        }
+        
+    except Error as e:
+        print(f"Error al obtener folios ocupados: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+    
+    return folios_ocupados
+
+def diagnosticar_sistema_folios():
+    """
+    Función de diagnóstico para verificar el estado del sistema de folios.
+    Útil para detectar inconsistencias.
+    
+    Returns:
+        dict: Reporte completo del estado del sistema
+    """
+    conn = conectar()
+    if not conn:
+        return {'error': 'No se pudo conectar a la base de datos'}
+    
+    cursor = conn.cursor()
+    reporte = {}
+    
+    try:
+        # Estado de la secuencia
+        cursor.execute("SELECT next_val FROM folio_sequence WHERE id = 1")
+        resultado = cursor.fetchone()
+        reporte['siguiente_folio_secuencia'] = resultado[0] if resultado else None
+        
+        # Máximo folio en facturas
+        cursor.execute("SELECT MAX(id_factura) FROM factura")
+        reporte['max_folio_facturas'] = cursor.fetchone()[0] or 0
+        
+        # Máximo folio en órdenes
+        cursor.execute("SELECT MAX(folio_numero) FROM ordenes_guardadas WHERE activo = TRUE")
+        reporte['max_folio_ordenes'] = cursor.fetchone()[0] or 0
+        
+        # Contar registros
+        cursor.execute("SELECT COUNT(*) FROM factura")
+        reporte['total_facturas'] = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM ordenes_guardadas WHERE activo = TRUE")
+        reporte['total_ordenes_activas'] = cursor.fetchone()[0]
+        
+        # Detectar inconsistencias
+        max_usado = max(reporte['max_folio_facturas'], reporte['max_folio_ordenes'])
+        siguiente_secuencia = reporte['siguiente_folio_secuencia'] or 1
+        
+        reporte['inconsistencia_detectada'] = siguiente_secuencia <= max_usado
+        reporte['folios_potencialmente_duplicados'] = []
+        
+        if reporte['inconsistencia_detectada']:
+            # Buscar posibles duplicados
+            cursor.execute("""
+                SELECT f.id_factura 
+                FROM factura f, ordenes_guardadas o 
+                WHERE f.id_factura = o.folio_numero AND o.activo = TRUE
+            """)
+            reporte['folios_potencialmente_duplicados'] = [row[0] for row in cursor.fetchall()]
+        
+    except Error as e:
+        reporte['error'] = f"Error durante diagnóstico: {e}"
+    finally:
+        cursor.close()
+        conn.close()
+    
+    return reporte
+
+# Función de mantenimiento para corregir inconsistencias
+def reparar_secuencia_folios():
+    """
+    Repara la secuencia de folios para evitar conflictos futuros.
+    Ajusta next_val al siguiente número disponible.
+    
+    Returns:
+        dict: Resultado de la reparación
+    """
+    conn = conectar()
+    if not conn:
+        return {'error': 'No se pudo conectar a la base de datos'}
+    
+    cursor = conn.cursor()
+    
+    try:
+        # Encontrar el mayor folio usado
+        cursor.execute("SELECT MAX(id_factura) FROM factura")
+        max_factura = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT MAX(folio_numero) FROM ordenes_guardadas WHERE activo = TRUE")
+        max_orden = cursor.fetchone()[0] or 0
+        
+        siguiente_seguro = max(max_factura, max_orden) + 1
+        
+        # Actualizar la secuencia
+        cursor.execute("UPDATE folio_sequence SET next_val = %s WHERE id = 1", (siguiente_seguro,))
+        conn.commit()
+        
+        return {
+            'exito': True,
+            'max_factura': max_factura,
+            'max_orden': max_orden,
+            'nuevo_next_val': siguiente_seguro,
+            'mensaje': f'Secuencia reparada. Próximo folio será: {siguiente_seguro}'
+        }
+        
+    except Error as e:
+        conn.rollback()
+        return {'error': f'Error al reparar secuencia: {e}'}
     finally:
         cursor.close()
         conn.close()
 
 # --- Funciones de Facturación ---
 
-def crear_factura_completa(id_cliente, items_carrito):
+def crear_factura_completa(id_cliente, items_carrito, folio_numero=None):
     """
-    Crea una transacción completa: factura, detalles, deuda y actualiza stock.
+    Crea una transacción completa: factura, detalles y actualiza stock.
+    Ahora compatible con el trigger after_factura_insert que maneja la deuda automáticamente.
     Retorna un diccionario con el ID de la nueva factura y el número de folio.
     """
     conn = conectar()
     if not conn: return None
     
-    # Verificar que existe la columna folio_numero
-    if not verificar_columna_folio():
-        print("Error: No se pudo verificar/crear la columna folio_numero")
-        return None
-    
     cursor = conn.cursor()
     id_factura_nueva = None
-    folio_numero = None
+    folio_usado = folio_numero
     
     try:
         # Iniciar una transacción para asegurar que todas las operaciones se completen
         conn.start_transaction()
 
-        # 1. Obtener el siguiente número de folio
-        folio_numero = obtener_siguiente_folio()
-        if folio_numero is None:
-            raise Error("No se pudo obtener el número de folio")
+        # 1. Crear la factura (el trigger manejará la deuda automáticamente)
+        if folio_usado:
+            # Si se proporciona folio específico, forzar el AUTO_INCREMENT
+            query_factura = "INSERT INTO factura (id_factura, fecha_factura, id_cliente) VALUES (%s, CURDATE(), %s)"
+            cursor.execute(query_factura, (folio_usado, id_cliente))
+            id_factura_nueva = folio_usado
+        else:
+            query_factura = "INSERT INTO factura (fecha_factura, id_cliente) VALUES (CURDATE(), %s)"
+            cursor.execute(query_factura, (id_cliente,))
+            id_factura_nueva = cursor.lastrowid
 
-        # 2. Crear la factura con número de folio
-        query_factura = "INSERT INTO factura (fecha_factura, id_cliente, folio_numero) VALUES (CURDATE(), %s, %s)"
-        cursor.execute(query_factura, (id_cliente, folio_numero))
-        id_factura_nueva = cursor.lastrowid # Obtener el ID de la factura recién creada
-
-        # 3. Insertar cada producto en detalle_factura y actualizar stock
-        monto_total = 0.0
+        # 2. Insertar cada producto en detalle_factura
+        # Los triggers se encargarán de actualizar stock y validar existencia
         query_detalle = """
             INSERT INTO detalle_factura (id_factura, id_producto, cantidad_factura, precio_unitario_venta)
             VALUES (%s, (SELECT id_producto FROM producto WHERE nombre_producto = %s), %s, %s)
         """
-        query_stock = "UPDATE producto SET stock = stock - %s WHERE nombre_producto = %s"
 
         for cantidad, nombre_prod, precio_unit_str, subtotal_str, unidad_producto in items_carrito:
             precio_unit = float(precio_unit_str.replace('$', ''))
             cantidad_float = float(cantidad)
             
-            # Insertar detalle
+            # Insertar detalle - los triggers manejarán stock y validaciones
             cursor.execute(query_detalle, (id_factura_nueva, nombre_prod, cantidad_float, precio_unit))
-            # Actualizar stock
-            cursor.execute(query_stock, (cantidad_float, nombre_prod))
-            
-            monto_total += float(subtotal_str.replace('$', ''))
 
-        # 4. Crear la deuda asociada a la factura
-        query_deuda = "INSERT INTO deuda (id_cliente, id_factura, monto, fecha_generada) VALUES (%s, %s, %s, CURDATE())"
-        cursor.execute(query_deuda, (id_cliente, id_factura_nueva, monto_total))
-        
         # Si todo fue exitoso, confirmar la transacción
         conn.commit()
+        folio_usado = id_factura_nueva
 
     except Error as e:
         print(f"Error en la transacción de facturación: {e}")
         # Si algo falla, revertir todos los cambios
         conn.rollback()
         id_factura_nueva = None
-        folio_numero = None
+        folio_usado = None
     finally:
         cursor.close()
         conn.close()
         
     return {
         'id_factura': id_factura_nueva,
-        'folio_numero': folio_numero
+        'folio_numero': folio_usado
     } if id_factura_nueva else None
+
+# --- Funciones de Gestión de Tipos de Cliente ---
+
+def obtener_tipos_cliente():
+    """Obtiene todos los tipos de cliente."""
+    conn = conectar()
+    if not conn: return []
+    
+    tipos = []
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id_tipo_cliente, nombre_tipo, descuento FROM tipo_cliente ORDER BY nombre_tipo")
+        tipos = cursor.fetchall()
+    except Error as e:
+        print(f"Error al obtener tipos de cliente: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+    return tipos
+
+def obtener_grupo_con_tipo(id_grupo):
+    """Obtiene información completa de un grupo incluyendo su tipo de cliente."""
+    conn = conectar()
+    if not conn: return None
+    
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = """
+            SELECT g.*, tc.nombre_tipo, tc.descuento
+            FROM grupo g
+            LEFT JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
+            WHERE g.id_grupo = %s
+        """
+        cursor.execute(query, (id_grupo,))
+        grupo = cursor.fetchone()
+        return grupo
+    except Error as e:
+        print(f"Error al obtener grupo con tipo: {e}")
+        return None
+    finally:
+        cursor.close()
+        conn.close()
 
 
 # --- BLOQUE DE PRUEBA ---
@@ -315,3 +552,11 @@ if __name__ == '__main__':
         print(f"Productos especiales encontrados: {productos_especiales}")
     else:
         print("No se encontraron grupos. Asegúrate de tener datos en la BD.")
+    
+    print(f"\nObteniendo siguiente folio:")
+    folio = obtener_siguiente_folio()
+    print(f"Siguiente folio: {folio}")
+    
+    print(f"\nObteniendo tipos de cliente:")
+    tipos = obtener_tipos_cliente()
+    print(f"Tipos encontrados: {tipos}")

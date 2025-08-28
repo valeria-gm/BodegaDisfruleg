@@ -58,7 +58,6 @@ class ComprasApp:
         # Barra de estado
         self.status_var = tk.StringVar()
         self.status_var.set(f"Usuario: {self.user_data['nombre_completo']} | Rol: {self.user_data['rol']}")
-        #self.status_var.set("Listo")
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
     
@@ -300,17 +299,11 @@ class ComprasApp:
         
         try:
             # Insertar en la base de datos
+            # NOTA: Los triggers manejan automáticamente la actualización del stock
             self.cursor.execute("""
                 INSERT INTO compra (fecha_compra, id_producto, cantidad_compra, precio_unitario_compra)
                 VALUES (%s, %s, %s, %s)
             """, (fecha, producto_id, cantidad, precio))
-            
-            # Actualizar stock del producto
-            self.cursor.execute("""
-                UPDATE producto 
-                SET stock = stock + %s 
-                WHERE id_producto = %s
-            """, (cantidad, producto_id))
             
             self.conn.commit()
             
@@ -365,7 +358,7 @@ class ComprasApp:
         
         # Actualizar contador en barra de estado
         total_compras = sum(c['total'] for c in compras if c['total'])
-        self.status_var.set(f"Compras cargadas: {len(compras)} registros - Total general: ${total_compras:.2f}")
+        self.status_var.set(f"Usuario: {self.user_data['nombre_completo']} | Compras: {len(compras)} registros - Total: ${total_compras:.2f}")
     
     def filtrar_compras(self, *args):
         """Filtrar compras por producto"""
@@ -521,7 +514,7 @@ class ComprasApp:
                 messagebox.showerror("Error", "El precio debe ser mayor que 0")
                 return
             
-            # Obtener cantidad anterior para ajustar stock
+            # Obtener cantidad anterior para ajustar stock manualmente ya que no hay trigger para UPDATE
             self.cursor.execute("""
                 SELECT cantidad_compra, id_producto 
                 FROM compra 
@@ -541,7 +534,7 @@ class ComprasApp:
                 WHERE id_compra = %s
             """, (fecha, float(cantidad), float(precio), compra_id))
             
-            # Actualizar stock del producto
+            # Actualizar stock del producto manualmente (no hay trigger para UPDATE en compra)
             if diferencia_cantidad != Decimal('0'):
                 self.cursor.execute("""
                     UPDATE producto 
@@ -580,7 +573,7 @@ class ComprasApp:
             return
         
         try:
-            # Obtener datos para ajustar stock
+            # Obtener datos para ajustar stock manualmente (ya que necesitamos revertir el stock)
             self.cursor.execute("""
                 SELECT cantidad_compra, id_producto 
                 FROM compra 
@@ -592,7 +585,7 @@ class ComprasApp:
                 # Eliminar de la base de datos
                 self.cursor.execute("DELETE FROM compra WHERE id_compra = %s", (compra_id,))
                 
-                # Ajustar stock
+                # Ajustar stock manualmente (revertir la cantidad que se había agregado)
                 self.cursor.execute("""
                     UPDATE producto 
                     SET stock = stock - %s 

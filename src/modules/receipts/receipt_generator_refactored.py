@@ -217,7 +217,7 @@ class ReciboAppMejorado:
         
         btn_agregar_tab = ttk.Button(
             info_frame, 
-            text="➕ Agregar Nuevo Pedido", 
+            text="+ Agregar Nuevo Pedido", 
             command=self._agregar_pestaña
         )
         btn_agregar_tab.pack(side="right")
@@ -225,7 +225,7 @@ class ReciboAppMejorado:
         # Información sobre secciones
         info_label = ttk.Label(
             frame_superior, 
-            text="💡 Tip: Active 'Habilitar Secciones' para organizar productos por categorías",
+            text="Tip: Active 'Habilitar Secciones' para organizar productos por categorías",
             font=("Arial", 9),
             foreground="gray"
         )
@@ -746,7 +746,7 @@ class ReciboAppMejorado:
             # Si es una orden guardada, usar su folio y marcarla como registrada
             if self.folio_actual and self.orden_guardada:
                 # Registrar venta en base de datos con el folio específico
-                resultado_factura = database.crear_factura_completa(id_cliente, items_carrito)
+                resultado_factura = database.crear_factura_completa(id_cliente, items_carrito, self.folio_actual)
                 
                 if resultado_factura:
                     # Marcar orden como registrada
@@ -894,7 +894,7 @@ class ReciboAppMejorado:
             ttk.Label(frame_precio, text="Nuevo Precio:").pack(side="left", padx=5)
             entry_precio_modificable = ttk.Entry(frame_precio, width=10)
             entry_precio_modificable.pack(side="left", padx=5)
-            entry_precio_modificable.insert(0, precio_str.replace('$', ''))
+            entry_precio_modificable.insert(0, precio_str.replace(', '))
             
             ttk.Label(top, text="*Producto especial: puedes modificar el precio.", 
                      font=("Arial", 8), foreground="red").pack(pady=2)
@@ -959,7 +959,7 @@ class ReciboAppMejorado:
             return
 
         try:
-            precio_unit = float(precio_str_or_modified.replace('$', '')) 
+            precio_unit = float(precio_str_or_modified.replace(', ')) 
             if precio_unit < 0:
                 raise ValueError("El precio no puede ser negativo.")
         except ValueError:

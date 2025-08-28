@@ -86,7 +86,7 @@ class PriceEditorApp:
         info_frame.pack(side="right")
         
         tk.Label(info_frame, 
-                text="📝 Para editar grupos/tipos, usar 'Administrador de Clientes'", 
+                text="🔧 Para editar grupos/tipos, usar 'Administrador de Clientes'", 
                 font=("Arial", 9, "italic"),
                 fg="#666", bg="#f0f0f0").pack()
         
@@ -302,22 +302,23 @@ class PriceEditorApp:
         """Actualizar información de tipos de cliente"""
         group_id = self.current_group.get()
         
-        # Get clients in this group
+        # Get the client type associated with this group
         self.cursor.execute("""
-            SELECT DISTINCT tc.nombre_tipo, tc.descuento
-            FROM cliente c
-            JOIN tipo_cliente tc ON c.id_tipo_cliente = tc.id_tipo_cliente
-            WHERE c.id_grupo = %s
-            ORDER BY tc.nombre_tipo
+            SELECT tc.nombre_tipo, tc.descuento, COUNT(c.id_cliente) as num_clientes
+            FROM grupo g
+            JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
+            LEFT JOIN cliente c ON c.id_grupo = g.id_grupo
+            WHERE g.id_grupo = %s
+            GROUP BY tc.id_tipo_cliente, tc.nombre_tipo, tc.descuento
         """, (group_id,))
         
-        client_types_in_group = self.cursor.fetchall()
+        result = self.cursor.fetchone()
         
-        if client_types_in_group:
-            type_info = ", ".join([f"{ct['nombre_tipo']} ({ct['descuento']}%)" for ct in client_types_in_group])
-            self.client_type_info_label.config(text=f"Tipos en este grupo: {type_info}", fg="blue")
+        if result:
+            type_info = f"Tipo: {result['nombre_tipo']} (Descuento: {result['descuento']}%) - {result['num_clientes']} clientes"
+            self.client_type_info_label.config(text=type_info, fg="blue")
         else:
-            self.client_type_info_label.config(text="(No hay clientes en este grupo)", fg="red")
+            self.client_type_info_label.config(text="(Grupo sin tipo de cliente asignado)", fg="red")
     
     def load_products(self):
         """Cargar productos desde la base de datos"""
@@ -342,7 +343,8 @@ class PriceEditorApp:
             FROM cliente c
             WHERE c.id_grupo = %s
         """, (group_id,))
-        client_count = self.cursor.fetchone()['client_count']
+        client_count_result = self.cursor.fetchone()
+        client_count = client_count_result['client_count'] if client_count_result else 0
         
         for product in self.all_products:
             precio_base = product['precio_base'] if product['precio_base'] else Decimal('0.00')
@@ -401,7 +403,8 @@ class PriceEditorApp:
             FROM cliente c
             WHERE c.id_grupo = %s
         """, (group_id,))
-        client_count = self.cursor.fetchone()['client_count']
+        client_count_result = self.cursor.fetchone()
+        client_count = client_count_result['client_count'] if client_count_result else 0
         
         filtered_count = 0
         for product in self.all_products:
@@ -642,15 +645,14 @@ class PriceEditorApp:
         preview_frame = tk.LabelFrame(main_frame, text="Vista Previa: Precios Finales por Tipo de Cliente", padx=10, pady=10)
         preview_frame.pack(fill="both", expand=True, pady=(0, 15))
         
-        # Obtener clientes del grupo actual
+        # Obtener el tipo de cliente del grupo actual
         self.cursor.execute("""
-            SELECT DISTINCT tc.nombre_tipo, tc.descuento
-            FROM cliente c
-            JOIN tipo_cliente tc ON c.id_tipo_cliente = tc.id_tipo_cliente
-            WHERE c.id_grupo = %s
-            ORDER BY tc.nombre_tipo
+            SELECT tc.nombre_tipo, tc.descuento
+            FROM grupo g
+            JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
+            WHERE g.id_grupo = %s
         """, (group_id,))
-        client_types_in_group = self.cursor.fetchall()
+        client_type_info = self.cursor.fetchone()
         
         preview_labels = []
         
@@ -661,16 +663,21 @@ class PriceEditorApp:
                     label.destroy()
                 preview_labels.clear()
                 
-                if base_price > 0:
-                    for ct in client_types_in_group:
-                        discount = ct['descuento']
-                        final_price = base_price * (1 - discount / 100)
-                        
-                        label = tk.Label(preview_frame, 
-                                       text=f"{ct['nombre_tipo']}: ${final_price:.2f} (descuento: {discount}%)",
-                                       font=("Arial", 10))
-                        label.pack(anchor="w", pady=2)
-                        preview_labels.append(label)
+                if base_price > 0 and client_type_info:
+                    discount = client_type_info['descuento']
+                    final_price = base_price * (1 - discount / 100)
+                    
+                    label = tk.Label(preview_frame, 
+                                   text=f"{client_type_info['nombre_tipo']}: ${final_price:.2f} (descuento: {discount}%)",
+                                   font=("Arial", 10))
+                    label.pack(anchor="w", pady=2)
+                    preview_labels.append(label)
+                elif base_price > 0 and not client_type_info:
+                    label = tk.Label(preview_frame, 
+                                   text=f"Precio sin descuento: ${base_price:.2f} (grupo sin tipo de cliente asignado)",
+                                   font=("Arial", 10), fg="orange")
+                    label.pack(anchor="w", pady=2)
+                    preview_labels.append(label)
                 else:
                     label = tk.Label(preview_frame, text="Ingrese un precio base para ver la vista previa", 
                                    font=("Arial", 10), fg="gray")
@@ -746,7 +753,7 @@ class PriceEditorApp:
         values = self.product_tree.item(item, "values")
         product_id = values[0]
         product_name = values[1]
-        is_special = "🔒" in values[7]
+        is_special = "🔒" in values[6]
         
         # Verificar permisos para productos especiales
         if is_special and not self.es_admin:
@@ -775,7 +782,7 @@ class PriceEditorApp:
                 if not confirm:
                     return
             
-            # Eliminar producto
+            # Eliminar producto (los triggers y foreign keys se encargan del resto)
             self.cursor.execute("DELETE FROM producto WHERE id_producto = %s", (product_id,))
             self.conn.commit()
             self.changes_made = True

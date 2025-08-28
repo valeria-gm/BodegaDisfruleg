@@ -7,7 +7,7 @@ from decimal import Decimal
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.ticker import FuncFormatter
 from collections import defaultdict
 from reportlab.lib.pagesizes import letter
@@ -15,7 +15,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from datetime import datetime
+from datetime import datetime, timedelta
+import numpy as np
 
 class AnalisisGananciasApp:
     def __init__(self, root, user_data):
@@ -33,7 +34,9 @@ class AnalisisGananciasApp:
         except mysql.connector.Error as err:
             messagebox.showerror("Error de conexión", f"No se pudo conectar a la base de datos:\n{err}")
             self.root.destroy()
+            return
         
+        self.all_products = []
         self.create_interface()
         self.load_analysis()
         
@@ -181,44 +184,33 @@ class AnalisisGananciasApp:
         h_scrollbar.config(command=self.tree.xview)
     
     def load_analysis(self):
-        """Load profitability analysis from database with discount consideration"""
+        """Load profitability analysis using the new database structure with views"""
         try:
-            # Main query for product analysis - MODIFIED to include discounts
+            # Use the new vista_ganancias_por_producto view for analysis
             self.cursor.execute("""
                 SELECT 
-                    p.id_producto,
-                    p.nombre_producto,
-                    p.unidad_producto as unidad,
-                    p.stock,
-                    
-                    -- Ventas (using view that applies discounts)
-                    COALESCE(SUM(df.cantidad_factura), 0) as cantidad_vendida,
-                    COALESCE(AVG(df.precio_unitario_venta), 0) as precio_promedio_venta,
-                    COALESCE(SUM(vd.subtotal_con_descuento), 0) as ingresos_totales,
-                    
-                    -- Compras (no changes)
-                    COALESCE(SUM(c.cantidad_compra), 0) as cantidad_comprada,
-                    COALESCE(AVG(c.precio_unitario_compra), 0) as precio_promedio_compra,
-                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) as costos_totales,
-                    
-                    -- Ganancias (now using subtotal_con_descuento)
-                    COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
-                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) as ganancia_total,
-                    
-                    -- Margen (calculated with discounted income)
+                    vgp.id_producto,
+                    vgp.nombre_producto,
+                    vgp.unidad_producto as unidad,
+                    vgp.stock,
+                    COALESCE(vgp.cantidad_vendida, 0) as cantidad_vendida,
                     CASE 
-                        WHEN COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) = 0 THEN 0
-                        ELSE ROUND(((COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
-                                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)) / 
-                                    COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)) * 100, 2)
-                    END as margen_ganancia_porcentaje
-                    
-                FROM producto p
-                LEFT JOIN detalle_factura df ON p.id_producto = df.id_producto
-                LEFT JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                LEFT JOIN compra c ON p.id_producto = c.id_producto
-                GROUP BY p.id_producto, p.nombre_producto, p.unidad_producto, p.stock
-                ORDER BY ganancia_total DESC
+                        WHEN COALESCE(vgp.cantidad_vendida, 0) > 0 
+                        THEN ROUND(vgp.ingresos_totales / vgp.cantidad_vendida, 2)
+                        ELSE 0
+                    END as precio_promedio_venta,
+                    COALESCE(vgp.ingresos_totales, 0) as ingresos_totales,
+                    COALESCE(vgp.cantidad_comprada, 0) as cantidad_comprada,
+                    CASE 
+                        WHEN COALESCE(vgp.cantidad_comprada, 0) > 0 
+                        THEN ROUND(vgp.costos_totales / vgp.cantidad_comprada, 2)
+                        ELSE 0
+                    END as precio_promedio_compra,
+                    COALESCE(vgp.costos_totales, 0) as costos_totales,
+                    COALESCE(vgp.ganancia_total, 0) as ganancia_total,
+                    COALESCE(vgp.margen_ganancia_porcentaje, 0) as margen_ganancia_porcentaje
+                FROM vista_ganancias_por_producto vgp
+                ORDER BY vgp.ganancia_total DESC
             """)
             
             products = self.cursor.fetchall()
@@ -229,13 +221,14 @@ class AnalisisGananciasApp:
                 self.tree.delete(item)
             
             # Calculate totals for summary
-            total_ventas = sum(p['ingresos_totales'] for p in products)
-            total_costos = sum(p['costos_totales'] for p in products)
+            total_ventas = sum(float(p['ingresos_totales'] or 0) for p in products)
+            total_costos = sum(float(p['costos_totales'] or 0) for p in products)
             ganancia_total = total_ventas - total_costos
             
             # Calculate average margin
-            productos_con_margen = [p for p in products if p['margen_ganancia_porcentaje'] != 0]
-            margen_promedio = (sum(p['margen_ganancia_porcentaje'] for p in productos_con_margen) / 
+            productos_con_margen = [p for p in products 
+                                   if p['margen_ganancia_porcentaje'] and float(p['margen_ganancia_porcentaje']) != 0]
+            margen_promedio = (sum(float(p['margen_ganancia_porcentaje']) for p in productos_con_margen) / 
                               len(productos_con_margen)) if productos_con_margen else 0
             
             # Update summary with formatted numbers
@@ -246,11 +239,8 @@ class AnalisisGananciasApp:
             
             # Populate tree
             for product in products:
-                # Calculate stock
-                stock = product['stock']
-                
                 # Color coding for ganancia
-                ganancia = product['ganancia_total']
+                ganancia = float(product['ganancia_total'] or 0)
                 if ganancia > 0:
                     tags = ('positive',)
                 elif ganancia < 0:
@@ -262,15 +252,15 @@ class AnalisisGananciasApp:
                     product['id_producto'],
                     product['nombre_producto'],
                     product['unidad'],
-                    f"{product['cantidad_vendida']:,.2f}",
-                    f"${product['precio_promedio_venta']:,.2f}",
-                    f"${product['ingresos_totales']:,.2f}",
-                    f"{product['cantidad_comprada']:,.2f}",
-                    f"${product['precio_promedio_compra']:,.2f}",
-                    f"${product['costos_totales']:,.2f}",
-                    f"${product['ganancia_total']:,.2f}",
-                    f"{product['margen_ganancia_porcentaje']:,.1f}%",
-                    f"{stock:,.2f}"
+                    f"{float(product['cantidad_vendida'] or 0):,.2f}",
+                    f"${float(product['precio_promedio_venta'] or 0):,.2f}",
+                    f"${float(product['ingresos_totales'] or 0):,.2f}",
+                    f"{float(product['cantidad_comprada'] or 0):,.2f}",
+                    f"${float(product['precio_promedio_compra'] or 0):,.2f}",
+                    f"${float(product['costos_totales'] or 0):,.2f}",
+                    f"${ganancia:,.2f}",
+                    f"{float(product['margen_ganancia_porcentaje'] or 0):,.1f}%",
+                    f"{float(product['stock'] or 0):,.2f}"
                 ), tags=tags)
             
             # Configure tags for color coding
@@ -295,9 +285,7 @@ class AnalisisGananciasApp:
         # Filter products
         for product in self.all_products:
             if search_text in product['nombre_producto'].lower():
-                stock = product['stock']
-                
-                ganancia = product['ganancia_total']
+                ganancia = float(product['ganancia_total'] or 0)
                 if ganancia > 0:
                     tags = ('positive',)
                 elif ganancia < 0:
@@ -309,15 +297,15 @@ class AnalisisGananciasApp:
                     product['id_producto'],
                     product['nombre_producto'],
                     product['unidad'],
-                    f"{product['cantidad_vendida']:,.2f}",
-                    f"${product['precio_promedio_venta']:,.2f}",
-                    f"${product['ingresos_totales']:,.2f}",
-                    f"{product['cantidad_comprada']:,.2f}",
-                    f"${product['precio_promedio_compra']:,.2f}",
-                    f"${product['costos_totales']:,.2f}",
-                    f"${product['ganancia_total']:,.2f}",
-                    f"{product['margen_ganancia_porcentaje']:,.1f}%",
-                    f"{stock:,.2f}"
+                    f"{float(product['cantidad_vendida'] or 0):,.2f}",
+                    f"${float(product['precio_promedio_venta'] or 0):,.2f}",
+                    f"${float(product['ingresos_totales'] or 0):,.2f}",
+                    f"{float(product['cantidad_comprada'] or 0):,.2f}",
+                    f"${float(product['precio_promedio_compra'] or 0):,.2f}",
+                    f"${float(product['costos_totales'] or 0):,.2f}",
+                    f"${ganancia:,.2f}",
+                    f"{float(product['margen_ganancia_porcentaje'] or 0):,.1f}%",
+                    f"{float(product['stock'] or 0):,.2f}"
                 ), tags=tags)
     
     def apply_filter(self, filter_type):
@@ -328,7 +316,7 @@ class AnalisisGananciasApp:
         
         # Filter based on type
         for product in self.all_products:
-            ganancia = product['ganancia_total']
+            ganancia = float(product['ganancia_total'] or 0)
             
             should_include = False
             if filter_type == "ganancia" and ganancia > 0:
@@ -339,8 +327,6 @@ class AnalisisGananciasApp:
                 should_include = True
             
             if should_include:
-                stock = product['stock']
-                
                 if ganancia > 0:
                     tags = ('positive',)
                 elif ganancia < 0:
@@ -352,19 +338,19 @@ class AnalisisGananciasApp:
                     product['id_producto'],
                     product['nombre_producto'],
                     product['unidad'],
-                    f"{product['cantidad_vendida']:,.2f}",
-                    f"${product['precio_promedio_venta']:,.2f}",
-                    f"${product['ingresos_totales']:,.2f}",
-                    f"{product['cantidad_comprada']:,.2f}",
-                    f"${product['precio_promedio_compra']:,.2f}",
-                    f"${product['costos_totales']:,.2f}",
-                    f"${product['ganancia_total']:,.2f}",
-                    f"{product['margen_ganancia_porcentaje']:,.1f}%",
-                    f"{stock:,.2f}"
+                    f"{float(product['cantidad_vendida'] or 0):,.2f}",
+                    f"${float(product['precio_promedio_venta'] or 0):,.2f}",
+                    f"${float(product['ingresos_totales'] or 0):,.2f}",
+                    f"{float(product['cantidad_comprada'] or 0):,.2f}",
+                    f"${float(product['precio_promedio_compra'] or 0):,.2f}",
+                    f"${float(product['costos_totales'] or 0):,.2f}",
+                    f"${ganancia:,.2f}",
+                    f"{float(product['margen_ganancia_porcentaje'] or 0):,.1f}%",
+                    f"{float(product['stock'] or 0):,.2f}"
                 ), tags=tags)
 
     def show_advanced_stats(self):
-        """Muestra estadísticas avanzadas con visualizaciones interactivas."""
+        """Muestra estadísticas avanzadas con visualizaciones interactivas mejoradas."""
         
         class StatsWindow:
             def __init__(self, parent, db_cursor, db_connection):
@@ -373,8 +359,12 @@ class AnalisisGananciasApp:
                 self.conn = db_connection
                 self.window = tk.Toplevel(parent)
                 self.window.title("Estadísticas Avanzadas - Disfruleg")
-                self.window.geometry("1200x850")
+                self.window.geometry("1300x900")
                 self.window.protocol("WM_DELETE_WINDOW", self.cleanup)
+                
+                # Variables para navegación histórica
+                self.current_period_index = 0
+                self.available_periods = []
                 
                 # Configuración de estilo
                 self.style = ttk.Style()
@@ -467,83 +457,76 @@ class AnalisisGananciasApp:
                     messagebox.showerror("Error", f"No se pudieron generar todos los gráficos: {str(e)}")
                     
             def generate_sales_chart(self):
-                """Genera gráficos de productos rentables y con pérdidas."""
+                """Genera gráficos de productos rentables y con pérdidas usando las vistas."""
                 try:
-                    # Obtener todos los productos con sus ganancias (considerando descuentos)
+                    # Usar la vista vista_ganancias_por_producto
                     self.cursor.execute("""
                         SELECT 
-                            p.nombre_producto,
-                            COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
-                            COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) AS ganancia_total
-                        FROM producto p
-                        LEFT JOIN detalle_factura df ON df.id_producto = p.id_producto
-                        LEFT JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                        LEFT JOIN compra c ON c.id_producto = p.id_producto
-                        GROUP BY p.id_producto, p.nombre_producto
-                        HAVING ganancia_total IS NOT NULL
+                            nombre_producto,
+                            COALESCE(ganancia_total, 0) AS ganancia_total
+                        FROM vista_ganancias_por_producto
+                        WHERE ganancia_total IS NOT NULL
                         ORDER BY ganancia_total DESC
                     """)
                     all_products = self.cursor.fetchall()
                     
                     # Filtrar productos rentables (top 10)
-                    profitable_products = sorted([p for p in all_products if p['ganancia_total'] > 0],
-                                            key=lambda x: x['ganancia_total'], reverse=True)[:10]
+                    profitable_products = sorted([p for p in all_products if float(p['ganancia_total']) > 0],
+                                            key=lambda x: float(x['ganancia_total']), reverse=True)[:10]
                     
                     # Filtrar productos con pérdidas (top 10)
-                    loss_products = sorted([p for p in all_products if p['ganancia_total'] < 0],
-                                        key=lambda x: x['ganancia_total'])[:10]
+                    loss_products = sorted([p for p in all_products if float(p['ganancia_total']) < 0],
+                                        key=lambda x: float(x['ganancia_total']))[:10]
                     
                     if not profitable_products and not loss_products:
                         self.show_no_data_message(self.tabs["sales"]["container"])
                         return
                     
-                    fig = plt.Figure(figsize=(12, 10), tight_layout=True)  # Añadido tight_layout
+                    fig = plt.Figure(figsize=(14, 10), tight_layout=True)
                     
                     # Gráfico de productos rentables
                     if profitable_products:
                         ax1 = fig.add_subplot(2, 1, 1)
-                        names = [p['nombre_producto'][:15] + '...' if len(p['nombre_producto']) > 15 
+                        names = [p['nombre_producto'][:20] + '...' if len(p['nombre_producto']) > 20 
                                 else p['nombre_producto'] for p in profitable_products]
-                        ganancias = [self.ensure_decimal(p['ganancia_total']) for p in profitable_products]
+                        ganancias = [float(p['ganancia_total']) for p in profitable_products]
                         
-                        # Convertir a float para matplotlib
-                        ganancias_float = [float(g) for g in ganancias]
+                        bars = ax1.barh(names, ganancias, color='#A5D6A7')
+                        ax1.set_title('Top 10 Productos Más Rentables', fontsize=14, fontweight='bold')
+                        ax1.set_xlabel('Ganancia ($)', fontsize=12)
                         
-                        bars = ax1.barh(names, ganancias_float, color='#A5D6A7')  # Color pastel verde
-                        ax1.set_title('Top 10 Productos Más Rentables')
-                        ax1.set_xlabel('Ganancia ($)')
-                        
-                        # Añadir etiquetas de valor
-                        max_val = max(abs(g) for g in ganancias_float) if ganancias_float else 0
+                        # Añadir etiquetas de valor mejoradas
+                        max_val = max(abs(g) for g in ganancias) if ganancias else 0
                         for bar, ganancia in zip(bars, ganancias):
                             width = bar.get_width()
-                            ax1.text(width + (max_val * 0.02),
+                            ax1.text(width + (max_val * 0.01),
                                     bar.get_y() + bar.get_height()/2,
-                                    f'${float(ganancia):,.2f}', 
-                                    ha='left', va='center')
+                                    f'${ganancia:,.2f}', 
+                                    ha='left', va='center', fontsize=10, fontweight='bold')
+                        
+                        ax1.grid(axis='x', alpha=0.3)
                     
                     # Gráfico de productos con pérdidas
                     if loss_products:
                         ax2 = fig.add_subplot(2, 1, 2)
-                        names = [p['nombre_producto'][:15] + '...' if len(p['nombre_producto']) > 15 
+                        names = [p['nombre_producto'][:20] + '...' if len(p['nombre_producto']) > 20 
                                 else p['nombre_producto'] for p in loss_products]
-                        perdidas = [abs(self.ensure_decimal(p['ganancia_total'])) for p in loss_products]
+                        perdidas = [abs(float(p['ganancia_total'])) for p in loss_products]
                         
-                        # Convertir a float para matplotlib
-                        perdidas_float = [float(p) for p in perdidas]
+                        bars = ax2.barh(names, perdidas, color='#EF9A9A')
+                        ax2.set_title('Top 10 Productos con Mayor Pérdida', fontsize=14, fontweight='bold')
+                        ax2.set_xlabel('Pérdida ($)', fontsize=12)
                         
-                        bars = ax2.barh(names, perdidas_float, color='#EF9A9A')  # Color pastel rojo
-                        ax2.set_title('Top 10 Productos con Mayor Pérdida')
-                        ax2.set_xlabel('Pérdida ($)')
-                        
-                        # Añadir etiquetas de valor
-                        max_val = max(abs(g) for g in perdidas_float) if perdidas_float else 0
+                        # Añadir etiquetas de valor mejoradas
+                        max_val = max(abs(g) for g in perdidas) if perdidas else 0
                         for bar, perdida in zip(bars, perdidas):
                             width = bar.get_width()
-                            ax2.text(width + (max_val * 0.02),
+                            ax2.text(width + (max_val * 0.01),
                                     bar.get_y() + bar.get_height()/2,
-                                    f'${float(perdida):,.2f}', 
-                                    ha='left', va='center')
+                                    f'${perdida:,.2f}', 
+                                    ha='left', va='center', fontsize=10, fontweight='bold')
+                        
+                        ax2.grid(axis='x', alpha=0.3)
                     
                     self.embed_plot(fig, self.tabs["sales"]["container"])
                     
@@ -551,29 +534,17 @@ class AnalisisGananciasApp:
                     self.show_error_message(self.tabs["sales"]["container"], str(e))
 
             def generate_profits_chart(self):
-                """Genera gráfico de ganancias por producto (general, sin agrupar por clientes)."""
+                """Genera gráfico de ganancias por producto usando vista."""
                 try:
                     self.cursor.execute("""
                         SELECT 
-                            p.id_producto,
-                            p.nombre_producto,
-                            COALESCE(SUM(vd.subtotal_con_descuento), 0) AS total_ventas,
-                            COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) AS total_compras,
-                            COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
-                            COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) AS ganancia,
-                            CASE 
-                                WHEN COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0) = 0 THEN 0
-                                ELSE ROUND(((COALESCE(SUM(vd.subtotal_con_descuento), 0) - 
-                                            COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)) / 
-                                            COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)) * 100, 2)
-                            END AS margen
-                        FROM producto p
-                        LEFT JOIN detalle_factura df ON p.id_producto = df.id_producto
-                        LEFT JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                        LEFT JOIN compra c ON p.id_producto = c.id_producto
-                        GROUP BY p.id_producto, p.nombre_producto
-                        ORDER BY ganancia DESC
-                        LIMIT 20
+                            nombre_producto,
+                            COALESCE(ganancia_total, 0) AS ganancia,
+                            COALESCE(margen_ganancia_porcentaje, 0) AS margen
+                        FROM vista_ganancias_por_producto
+                        WHERE ganancia_total IS NOT NULL
+                        ORDER BY ganancia_total DESC
+                        LIMIT 15
                     """)
                     data = self.cursor.fetchall()
                 
@@ -581,33 +552,44 @@ class AnalisisGananciasApp:
                         self.show_no_data_message(self.tabs["profits"]["container"])
                         return
                     
-                    fig, ax = plt.subplots(figsize=(12, 6))
+                    fig, ax = plt.subplots(figsize=(14, 8))
                     
                     # Formateador para valores monetarios
                     formatter = FuncFormatter(lambda x, _: f"${x:,.2f}" if x is not None else "$0.00")
                     ax.xaxis.set_major_formatter(formatter)
                     
-                    # Convertir valores usando ensure_decimal
-                    ganancias = [self.ensure_decimal(p['ganancia']) for p in data]
-                    nombres = [p['nombre_producto'][:20] + ('...' if len(p['nombre_producto']) > 20 else '') 
-                            for p in data]
+                    ganancias = [float(p['ganancia']) for p in data]
+                    nombres = [p['nombre_producto'][:25] + ('...' if len(p['nombre_producto']) > 25 else '') 
+                              for p in data]
                     
-                    # Convertir a float solo para matplotlib
-                    ganancias_float = [float(g) if g is not None else 0.0 for g in ganancias]
+                    # Colores según ganancia/pérdida
+                    colors = ['#A5D6A7' if g >= 0 else '#EF9A9A' for g in ganancias]
                     
-                    bars = ax.barh(nombres, ganancias_float, color='#90CAF9')  # Color pastel azul
-                    ax.set_title("Ganancia por Producto (Top 20) - General\n(Ventas con descuento - Compras)")
-                    ax.set_xlabel("Ganancia Total ($)")
+                    bars = ax.barh(nombres, ganancias, color=colors)
+                    ax.set_title("Ganancia por Producto (Top 15)\nVerde: Ganancia | Rojo: Pérdida", 
+                               fontsize=14, fontweight='bold')
+                    ax.set_xlabel("Ganancia Total ($)", fontsize=12)
                     
-                    # Añadir etiquetas de valor, manejando None
-                    max_val = max(abs(g) for g in ganancias_float) if ganancias_float else 0
+                    # Añadir etiquetas de valor mejoradas
+                    max_val = max(abs(g) for g in ganancias) if ganancias else 0
                     for bar, ganancia, producto in zip(bars, ganancias, data):
                         width = bar.get_width()
-                        margen = producto['margen'] if producto['margen'] is not None else 0
-                        ax.text(width + (max_val * 0.02),
-                            bar.get_y() + bar.get_height()/2,
-                            f"${float(ganancia):,.2f} ({margen:.1f}%)" if ganancia is not None else "$0.00 (0.0%)",
-                            va='center', ha='left', fontsize=8)
+                        margen = float(producto['margen'])
+                        
+                        # Posición de etiqueta
+                        if ganancia >= 0:
+                            x_pos = width + (max_val * 0.01)
+                            ha = 'left'
+                        else:
+                            x_pos = width - (max_val * 0.01)
+                            ha = 'right'
+                            
+                        ax.text(x_pos, bar.get_y() + bar.get_height()/2,
+                                f"${ganancia:,.2f}\n({margen:.1f}%)",
+                                va='center', ha=ha, fontsize=9, fontweight='bold')
+                    
+                    ax.grid(axis='x', alpha=0.3)
+                    ax.axvline(x=0, color='black', linewidth=1, alpha=0.5)
                     
                     plt.tight_layout()
                     self.embed_plot(fig, self.tabs["profits"]["container"])
@@ -616,7 +598,7 @@ class AnalisisGananciasApp:
                     self.show_error_message(self.tabs["profits"]["container"], str(e))
                 
             def generate_temporal_chart(self):
-                """Genera gráfico temporal con selector de período y tipo de análisis."""
+                """Genera gráfico temporal con selector de período y tipo de análisis mejorado."""
                 try:
                     frame = self.tabs["temporal"]["frame"]
                     
@@ -624,26 +606,22 @@ class AnalisisGananciasApp:
                     control_frame = ttk.Frame(frame)
                     control_frame.pack(fill="x", padx=10, pady=5)
                     
-                    ttk.Label(control_frame, text="Agrupar por:").pack(side="left")
+                    # Primera fila de controles
+                    ttk.Label(control_frame, text="Agrupar por:").grid(row=0, column=0, padx=5, sticky="w")
                     
                     self.time_var = tk.StringVar(value="Mes")
-                    time_options = {
-                        "Día": "day",
-                        "Semana": "week",
-                        "Mes": "month",
-                        "Trimestre": "quarter",
-                        "Año": "year"
-                    }
+                    time_options = ["Día", "Semana", "Mes", "Trimestre", "Año"]
                     
                     time_combo = ttk.Combobox(
                         control_frame,
                         textvariable=self.time_var,
-                        values=list(time_options.keys()),
-                        state="readonly"
+                        values=time_options,
+                        state="readonly",
+                        width=15
                     )
-                    time_combo.pack(side="left", padx=5)
+                    time_combo.grid(row=0, column=1, padx=5)
                     
-                    ttk.Label(control_frame, text="Tipo de análisis:").pack(side="left", padx=(10, 0))
+                    ttk.Label(control_frame, text="Tipo de análisis:").grid(row=0, column=2, padx=5, sticky="w")
                     
                     self.analysis_type_var = tk.StringVar(value="General")
                     analysis_options = ["General", "Por Producto", "Por Grupo de Clientes"]
@@ -652,12 +630,28 @@ class AnalisisGananciasApp:
                         control_frame,
                         textvariable=self.analysis_type_var,
                         values=analysis_options,
-                        state="readonly"
+                        state="readonly",
+                        width=20
                     )
-                    analysis_combo.pack(side="left", padx=5)
+                    analysis_combo.grid(row=0, column=3, padx=5)
                     
                     # Botón para actualizar
-                    ttk.Button(control_frame, text="Actualizar", command=self.update_temporal_chart).pack(side="left", padx=10)
+                    ttk.Button(control_frame, text="Actualizar", command=self.update_temporal_chart).grid(row=0, column=4, padx=10)
+                    
+                    # Segunda fila - Navegación histórica
+                    nav_frame = ttk.Frame(control_frame)
+                    nav_frame.grid(row=1, column=0, columnspan=5, pady=10, sticky="ew")
+                    
+                    ttk.Label(nav_frame, text="Navegación:").pack(side="left", padx=5)
+                    
+                    self.prev_button = ttk.Button(nav_frame, text="← Anterior", command=self.navigate_previous)
+                    self.prev_button.pack(side="left", padx=5)
+                    
+                    self.period_label = ttk.Label(nav_frame, text="", background="white", relief="sunken", width=30)
+                    self.period_label.pack(side="left", padx=5)
+                    
+                    self.next_button = ttk.Button(nav_frame, text="Siguiente →", command=self.navigate_next)
+                    self.next_button.pack(side="left", padx=5)
 
                     # Frame del gráfico
                     self.tabs["temporal"]["graph_frame"] = ttk.Frame(frame)
@@ -667,356 +661,428 @@ class AnalisisGananciasApp:
                     
                 except Exception as e:
                     self.show_error_message(self.tabs["temporal"]["container"], str(e))
+            
+            def get_period_data(self, period_type):
+                """Obtiene los períodos disponibles según el tipo seleccionado."""
+                period_queries = {
+                    "Año": """
+                        SELECT DISTINCT YEAR(f.fecha_factura) AS periodo 
+                        FROM factura f
+                        ORDER BY periodo DESC
+                        LIMIT 5
+                    """,
+                    "Trimestre": """
+                        SELECT DISTINCT CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura)) AS periodo 
+                        FROM factura f
+                        WHERE YEAR(f.fecha_factura) >= YEAR(CURRENT_DATE) - 2
+                        ORDER BY periodo DESC
+                        LIMIT 8
+                    """,
+                    "Mes": """
+                        SELECT DISTINCT DATE_FORMAT(f.fecha_factura, '%Y-%m') AS periodo 
+                        FROM factura f
+                        WHERE f.fecha_factura >= DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH)
+                        ORDER BY periodo DESC
+                        LIMIT 12
+                    """,
+                    "Semana": """
+                        SELECT DISTINCT DATE_FORMAT(f.fecha_factura, '%Y-%u') AS periodo 
+                        FROM factura f
+                        WHERE f.fecha_factura >= DATE_SUB(CURRENT_DATE, INTERVAL 12 WEEK)
+                        ORDER BY periodo DESC
+                        LIMIT 12
+                    """,
+                    "Día": """
+                        SELECT DISTINCT DATE(f.fecha_factura) AS periodo 
+                        FROM factura f
+                        WHERE f.fecha_factura >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)
+                        ORDER BY periodo DESC
+                        LIMIT 30
+                    """
+                }
+                
+                try:
+                    query = period_queries.get(period_type, period_queries["Mes"])
+                    self.cursor.execute(query)
+                    periods = [str(row['periodo']) for row in self.cursor.fetchall()]
+                    return periods
+                except:
+                    return []
+            
+            def navigate_previous(self):
+                """Navega al período anterior."""
+                if self.current_period_index > 0:
+                    self.current_period_index -= 1
+                    self.update_temporal_chart()
+            
+            def navigate_next(self):
+                """Navega al período siguiente."""
+                max_periods = len(self.available_periods) - 5  # Mostrar 5 períodos por vez
+                if self.current_period_index < max_periods:
+                    self.current_period_index += 1
+                    self.update_temporal_chart()
                     
             def update_temporal_chart(self, event=None):
-                """Actualiza el gráfico temporal según la selección."""
+                """Actualiza el gráfico temporal con mejoras implementadas."""
                 try:
-                    period_map = {
-                        "Día": ("DATE(f.fecha_factura)", "Día"),
-                        "Semana": ("DATE_FORMAT(f.fecha_factura, '%Y-%U')", "Semana"),
-                        "Semana Fiscal MX": ("CONCAT(YEAR(f.fecha_factura), '-SF', WEEK(f.fecha_factura, 3))", "Semana Fiscal"),
-                        "Mes": ("DATE_FORMAT(f.fecha_factura, '%Y-%m')", "Mes"),
-                        "Trimestre": ("CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))", "Trimestre"),
-                        "Año": ("YEAR(f.fecha_factura)", "Año")
-                    }
-                    
                     selected_period = self.time_var.get()
                     analysis_type = self.analysis_type_var.get()
-                    period_func, period_label = period_map.get(selected_period, period_map["Mes"])
                     
-                    # Obtener períodos según la selección
-                    if selected_period == "Año":
-                        self.cursor.execute(f"""
-                            SELECT DISTINCT {period_func} AS periodo 
-                            FROM factura f
-                            ORDER BY periodo DESC
-                            LIMIT 5
-                        """)
-                    elif selected_period == "Trimestre":
-                        self.cursor.execute(f"""
-                            SELECT DISTINCT {period_func} AS periodo 
-                            FROM factura f
-                            WHERE YEAR(f.fecha_factura) = (SELECT MAX(YEAR(fecha_factura)) FROM factura)
-                            ORDER BY periodo
-                        """)
-                    elif selected_period == "Mes":
-                        self.cursor.execute(f"""
-                            SELECT DISTINCT {period_func} AS periodo 
-                            FROM factura f
-                            WHERE CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura)) = 
-                                (SELECT CONCAT(YEAR(MAX(fecha_factura)), '-Q', QUARTER(MAX(fecha_factura))) FROM factura)
-                            ORDER BY periodo
-                        """)
-                    elif selected_period == "Semana":
-                        self.cursor.execute(f"""
-                            SELECT DISTINCT {period_func} AS periodo 
-                            FROM factura f
-                            WHERE DATE_FORMAT(f.fecha_factura, '%Y-%m') = 
-                                (SELECT DATE_FORMAT(MAX(fecha_factura), '%Y-%m') FROM factura)
-                            ORDER BY periodo
-                        """)
-                    elif selected_period == "Semana Fiscal MX":
-                        self.cursor.execute(f"""
-                            SELECT DISTINCT {period_func} AS periodo 
-                            FROM factura f
-                            WHERE CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura)) = 
-                                (SELECT CONCAT(YEAR(MAX(fecha_factura)), '-Q', QUARTER(MAX(fecha_factura))) FROM factura)
-                            ORDER BY periodo
-                        """)
-                    elif selected_period == "Día":
-                        self.cursor.execute(f"""
-                            SELECT DISTINCT {period_func} AS periodo 
-                            FROM factura f
-                            WHERE YEARWEEK(f.fecha_factura, 3) = 
-                                (SELECT YEARWEEK(MAX(fecha_factura), 3) FROM factura)
-                            ORDER BY periodo
-                        """)
+                    # Obtener períodos disponibles
+                    self.available_periods = self.get_period_data(selected_period)
                     
-                    period_rows = self.cursor.fetchall()
-                    periods = [str(row['periodo']) for row in period_rows]
-                    
-                    if not periods:
+                    if not self.available_periods:
                         self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
                         return
                     
+                    # Determinar períodos a mostrar
+                    start_idx = self.current_period_index
+                    end_idx = min(start_idx + 5, len(self.available_periods))
+                    current_periods = self.available_periods[start_idx:end_idx]
+                    
+                    # Actualizar etiqueta de navegación
+                    if current_periods:
+                        period_range = f"{current_periods[-1]} - {current_periods[0]}"
+                        self.period_label.config(text=f"Mostrando: {period_range}")
+                    
+                    # Actualizar botones de navegación
+                    self.prev_button.config(state="normal" if self.current_period_index > 0 else "disabled")
+                    self.next_button.config(state="normal" if end_idx < len(self.available_periods) else "disabled")
+                    
                     if analysis_type == "General":
-                        self.cursor.execute(f"""
-                            SELECT 
-                                {period_func} AS periodo,
-                                SUM(vd.subtotal_con_descuento) AS ventas,
-                                COALESCE((
-                                    SELECT SUM(c.cantidad_compra * c.precio_unitario_compra)
-                                    FROM compra c
-                                    WHERE {period_func.replace('f.fecha_factura', 'c.fecha_compra')} = periodo
-                                ), 0) AS compras,
-                                SUM(vd.subtotal_con_descuento) - COALESCE((
-                                    SELECT SUM(c.cantidad_compra * c.precio_unitario_compra)
-                                    FROM compra c
-                                    WHERE {period_func.replace('f.fecha_factura', 'c.fecha_compra')} = periodo
-                                ), 0) AS ganancia
-                            FROM factura f
-                            JOIN detalle_factura df ON df.id_factura = f.id_factura
-                            JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                            WHERE {period_func} IN ({','.join([f"'{p}'" for p in periods])})
-                            GROUP BY {period_func}
-                            ORDER BY periodo
-                        """)
-                        data = self.cursor.fetchall()
-                        
-                        if not data:
-                            self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
-                            return
-                        
-                        periods = [d['periodo'] for d in data]
-                        ventas = [self.convert_decimal(d['ventas']) for d in data]
-                        compras = [self.convert_decimal(d['compras']) for d in data]
-                        ganancias = [self.convert_decimal(d['ganancia']) for d in data]
-                        
-                        fig, ax = plt.subplots(figsize=(12, 6))
-                        
-                        formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
-                        ax.yaxis.set_major_formatter(formatter)
-                        
-                        # Gráfico de barras apiladas
-                        ax.bar(periods, ventas, color='#A5D6A7', label='Ventas')
-                        ax.bar(periods, [-c for c in compras], color='#EF9A9A', label='Compras')
-                        
-                        # Gráfico de línea para ganancia
-                        ax.plot(periods, ganancias, marker='o', color='#9C27B0', linewidth=2, label='Ganancia Neta')
-                        
-                        # Añadir etiquetas para todos los períodos
-                        max_val = max(max(abs(v) for v in ventas), max(abs(c) for c in compras), max(abs(g) for g in ganancias))
-                        label_offset = max_val * 0.05
-                        
-                        for i, (v, c, g) in enumerate(zip(ventas, compras, ganancias)):
-                            # Etiqueta de ventas
-                            ax.text(i, v + label_offset, f"${v:,.2f}", 
-                                ha='center', va='bottom', fontsize=8)
-                            
-                            # Etiqueta de compras
-                            ax.text(i, -c - label_offset, f"${c:,.2f}", 
-                                ha='center', va='top', fontsize=8)
-                            
-                            # Etiqueta de ganancia
-                            if g >= 0:
-                                ax.text(i, g + label_offset, f"${g:,.2f}", 
-                                    ha='center', va='bottom', fontsize=8, color='#9C27B0')
-                            else:
-                                ax.text(i, g - label_offset, f"${g:,.2f}", 
-                                    ha='center', va='top', fontsize=8, color='#9C27B0')
-                        
-                        ax.set_title(f"Ganancias por {period_label} - Análisis General")
-                        ax.set_ylabel("Monto ($)")
-                        ax.set_xlabel(period_label)
-                        ax.grid(True, linestyle='--', alpha=0.6)
-                        ax.legend()
-                        
-                        # Ajustar límites para las etiquetas
-                        ax.set_ylim(min(-max_val * 1.2, min(ganancias) - label_offset * 2), 
-                                max(max(ventas), max(ganancias)) + label_offset * 2)
-                        
-                        if len(periods) > 8:
-                            plt.xticks(rotation=45, ha='right')
-                        
-                        plt.tight_layout()
-                        self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
-                        
+                        self.generate_general_temporal_chart(selected_period, current_periods)
                     elif analysis_type == "Por Producto":
-                        self.cursor.execute(f"""
-                            SELECT 
-                                {period_func} AS periodo,
-                                p.nombre_producto,
-                                SUM(vd.subtotal_con_descuento) - 
-                                COALESCE((
-                                    SELECT SUM(c.cantidad_compra * c.precio_unitario_compra)
-                                    FROM compra c
-                                    WHERE c.id_producto = p.id_producto
-                                    AND {period_func.replace('f.fecha_factura', 'c.fecha_compra')} = periodo
-                                ), 0) AS ganancia
-                            FROM producto p
-                            JOIN detalle_factura df ON p.id_producto = df.id_producto
-                            JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                            JOIN factura f ON df.id_factura = f.id_factura
-                            WHERE {period_func} IN ({','.join([f"'{p}'" for p in periods])})
-                            GROUP BY {period_func}, p.id_producto, p.nombre_producto
-                            ORDER BY periodo, ganancia DESC
-                        """)
-                        data = self.cursor.fetchall()
-                        
-                        if not data:
-                            self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
-                            return
-                        
-                        period_data = defaultdict(list)
-                        for row in data:
-                            period_data[row['periodo']].append((row['nombre_producto'], self.convert_decimal(row['ganancia'])))
-                        
-                        periods = sorted(period_data.keys())
-                        product_counts = defaultdict(int)
-                        
-                        for period in periods:
-                            for i, (product, _) in enumerate(period_data[period]):
-                                if i < 5:
-                                    product_counts[product] += 1
-                        
-                        sorted_products = sorted(product_counts.items(), key=lambda x: x[1], reverse=True)
-                        top_products = [p[0] for p in sorted_products[:5]]
-                        
-                        product_ganancias = {p: [] for p in top_products}
-                        product_ganancias['Otros'] = []
-                        
-                        for period in periods:
-                            period_ganancias = {p: 0 for p in top_products}
-                            others = 0
-                            
-                            for i, (product, ganancia) in enumerate(period_data[period]):
-                                if product in period_ganancias:
-                                    period_ganancias[product] += ganancia
-                                else:
-                                    others += ganancia
-                            
-                            for p in top_products:
-                                product_ganancias[p].append(period_ganancias[p])
-                            product_ganancias['Otros'].append(others)
-                        
-                        fig, ax = plt.subplots(figsize=(12, 6))
-                        
-                        formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
-                        ax.yaxis.set_major_formatter(formatter)
-                        
-                        colors = ['#A5D6A7', '#90CAF9', '#FFE082', '#CE93D8', '#80CBC4', '#F48FB1']
-                        
-                        bottom_pos = [0] * len(periods)
-                        bottom_neg = [0] * len(periods)
-                        
-                        for i, (product, ganancias) in enumerate(product_ganancias.items()):
-                            label = product[:15] + '...' if len(product) > 15 else product
-                            
-                            pos = [max(0, g) for g in ganancias]
-                            neg = [min(0, g) for g in ganancias]
-                            
-                            if any(p > 0 for p in pos):
-                                bars = ax.bar(periods, pos, color=colors[i % len(colors)], 
-                                            label=f"{label} (+)", bottom=bottom_pos)
-                                bottom_pos = [b + p for b, p in zip(bottom_pos, pos)]
-                                
-                                for j, val in enumerate(pos):
-                                    if val > 0:
-                                        ax.text(j, bottom_pos[j] - val/2, f"${val:,.2f}",
-                                            ha='center', va='center', fontsize=6)
-                            
-                            if any(n < 0 for n in neg):
-                                bars = ax.bar(periods, neg, color=colors[i % len(colors)], 
-                                            label=f"{label} (-)", bottom=bottom_neg)
-                                bottom_neg = [b + n for b, n in zip(bottom_neg, neg)]
-                                
-                                for j, val in enumerate(neg):
-                                    if val < 0:
-                                        ax.text(j, bottom_neg[j] - val/2, f"${abs(val):,.2f}",
-                                            ha='center', va='center', fontsize=6)
-                        
-                        ax.axhline(0, color='black', linewidth=0.8)
-                        ax.set_title(f"Ganancias por {period_label} - Top Productos")
-                        ax.set_ylabel("Ganancia ($)")
-                        ax.set_xlabel(period_label)
-                        ax.grid(True, linestyle='--', alpha=0.6)
-                        ax.legend()
-                        
-                        if len(periods) > 8:
-                            plt.xticks(rotation=45, ha='right')
-                        
-                        plt.tight_layout()
-                        self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
-                        
+                        self.generate_product_temporal_chart(selected_period, current_periods)
                     elif analysis_type == "Por Grupo de Clientes":
-                        self.cursor.execute(f"""
-                            SELECT 
-                                {period_func} AS periodo,
-                                g.clave_grupo,
-                                SUM(vd.subtotal_con_descuento) AS ventas,
-                                COUNT(DISTINCT f.id_factura) AS facturas,
-                                COUNT(DISTINCT f.id_cliente) AS clientes
-                            FROM grupo g
-                            JOIN cliente c ON g.id_grupo = c.id_grupo
-                            JOIN factura f ON c.id_cliente = f.id_cliente
-                            JOIN detalle_factura df ON f.id_factura = df.id_factura
-                            JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                            WHERE {period_func} IN ({','.join([f"'{p}'" for p in periods])})
-                            GROUP BY {period_func}, g.id_grupo, g.clave_grupo
-                            ORDER BY periodo, ventas DESC
-                        """)
-                        data = self.cursor.fetchall()
-                        
-                        if not data:
-                            self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
-                            return
-                        
-                        period_data = defaultdict(list)
-                        for row in data:
-                            period_data[row['periodo']].append((row['clave_grupo'], self.convert_decimal(row['ventas']), row['clientes']))
-                        
-                        periods = sorted(period_data.keys())
-                        groups = set()
-                        
-                        for period in periods:
-                            groups.update([g[0] for g in period_data[period]])
-                        
-                        groups = list(groups)
-                        
-                        group_ventas = {g: [] for g in groups}
-                        group_clientes = {g: [] for g in groups}
-                        
-                        for period in periods:
-                            period_ventas = {g: 0 for g in groups}
-                            period_clientes = {g: 0 for g in groups}
-                            
-                            for group, venta, clientes in period_data[period]:
-                                if group in period_ventas:
-                                    period_ventas[group] += venta
-                                    period_clientes[group] = clientes
-                            
-                            for g in groups:
-                                group_ventas[g].append(period_ventas[g])
-                                group_clientes[g].append(period_clientes[g])
-                        
-                        fig, ax = plt.subplots(figsize=(12, 6))
-                        
-                        formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
-                        ax.yaxis.set_major_formatter(formatter)
-                        
-                        colors = ['#A5D6A7', '#90CAF9', '#FFE082', '#CE93D8', '#80CBC4', '#F48FB1']
-                        
-                        bottom = None
-                        for i, (group, ventas) in enumerate(group_ventas.items()):
-                            color = colors[i % len(colors)]
-                            bars = ax.bar(periods, ventas, color=color, label=group, bottom=bottom)
-                            
-                            for j, (v, c) in enumerate(zip(ventas, group_clientes[group])):
-                                if v > 0:
-                                    ax.text(j, (bottom[j] if bottom is not None else 0) + v/2, 
-                                        f"${v:,.2f}\n({c} clientes)", 
-                                        ha='center', va='center', fontsize=6)
-                            
-                            if bottom is None:
-                                bottom = ventas
-                            else:
-                                bottom = [b + v for b, v in zip(bottom, ventas)]
-                        
-                        ax.set_title(f"Ventas por {period_label} - Por Grupo de Clientes")
-                        ax.set_ylabel("Ventas ($)")
-                        ax.set_xlabel(period_label)
-                        ax.grid(True, linestyle='--', alpha=0.6)
-                        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-                        
-                        if len(periods) > 8:
-                            plt.xticks(rotation=45, ha='right')
-                        
-                        plt.tight_layout()
-                        self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
+                        self.generate_group_temporal_chart(selected_period, current_periods)
                         
                 except Exception as e:
                     self.show_error_message(self.tabs["temporal"]["graph_frame"], str(e))
+            
+            def generate_general_temporal_chart(self, period_type, periods):
+                """Genera gráfico temporal general con ganancias y pérdidas separadas."""
+                try:
+                    period_func_map = {
+                        "Día": "DATE(f.fecha_factura)",
+                        "Semana": "DATE_FORMAT(f.fecha_factura, '%Y-%u')",
+                        "Mes": "DATE_FORMAT(f.fecha_factura, '%Y-%m')",
+                        "Trimestre": "CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))",
+                        "Año": "YEAR(f.fecha_factura)"
+                    }
                     
+                    period_func = period_func_map.get(period_type, "DATE_FORMAT(f.fecha_factura, '%Y-%m')")
+                    
+                    # Query mejorado usando vistas
+                    self.cursor.execute(f"""
+                        SELECT 
+                            {period_func} AS periodo,
+                            SUM(vd.subtotal_con_descuento) AS ventas_totales,
+                            (SELECT COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)
+                             FROM compra c 
+                             WHERE {period_func.replace('f.fecha_factura', 'c.fecha_compra')} = periodo) AS compras_totales,
+                            SUM(vd.subtotal_con_descuento) - 
+                            (SELECT COALESCE(SUM(c.cantidad_compra * c.precio_unitario_compra), 0)
+                             FROM compra c 
+                             WHERE {period_func.replace('f.fecha_factura', 'c.fecha_compra')} = periodo) AS ganancia_neta
+                        FROM factura f
+                        JOIN detalle_factura df ON f.id_factura = df.id_factura
+                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
+                        WHERE {period_func} IN ({','.join([f"'{p}'" for p in periods])})
+                        GROUP BY {period_func}
+                        ORDER BY periodo
+                    """)
+                    
+                    data = self.cursor.fetchall()
+                    
+                    if not data:
+                        self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
+                        return
+                    
+                    # Preparar datos
+                    periods_data = [d['periodo'] for d in data]
+                    ventas = [float(d['ventas_totales'] or 0) for d in data]
+                    compras = [float(d['compras_totales'] or 0) for d in data]
+                    ganancias = [float(d['ganancia_neta'] or 0) for d in data]
+                    
+                    # Crear gráfico
+                    fig, ax = plt.subplots(figsize=(14, 8))
+                    
+                    x = np.arange(len(periods_data))
+                    width = 0.35
+                    
+                    # Barras para ventas (positivas) y compras (negativas)
+                    bars_ventas = ax.bar(x - width/2, ventas, width, label='Ingresos', color='#A5D6A7', alpha=0.8)
+                    bars_compras = ax.bar(x + width/2, [-c for c in compras], width, label='Compras', color='#EF9A9A', alpha=0.8)
+                    
+                    # Línea de ganancia neta
+                    line = ax.plot(x, ganancias, marker='o', color='#2196F3', linewidth=3, markersize=8, label='Ganancia Neta')
+                    
+                    # Etiquetas de montos en todas las barras
+                    for i, (bar_v, bar_c, v, c, g) in enumerate(zip(bars_ventas, bars_compras, ventas, compras, ganancias)):
+                        # Etiqueta de ventas
+                        ax.text(bar_v.get_x() + bar_v.get_width()/2, bar_v.get_height() + max(ventas) * 0.02,
+                               f'${v:,.0f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+                        
+                        # Etiqueta de compras
+                        ax.text(bar_c.get_x() + bar_c.get_width()/2, bar_c.get_height() - max(compras) * 0.02,
+                               f'${c:,.0f}', ha='center', va='top', fontsize=9, fontweight='bold')
+                        
+                        # Etiqueta de ganancia neta
+                        y_offset = max(ventas) * 0.05 if g >= 0 else -max(compras) * 0.05
+                        ax.text(i, g + y_offset, f'${g:,.0f}', ha='center', 
+                               va='bottom' if g >= 0 else 'top', fontsize=10, fontweight='bold', 
+                               color='#2196F3')
+                    
+                    ax.set_xlabel(f'{period_type}', fontsize=12)
+                    ax.set_ylabel('Monto ($)', fontsize=12)
+                    ax.set_title(f'Análisis General por {period_type}\nVerde: Ingresos | Rojo: Compras | Azul: Ganancia Neta', 
+                               fontsize=14, fontweight='bold')
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(periods_data, rotation=45 if len(periods_data) > 5 else 0)
+                    ax.legend(fontsize=11)
+                    ax.grid(axis='y', alpha=0.3)
+                    ax.axhline(y=0, color='black', linewidth=1, alpha=0.5)
+                    
+                    # Formatear ejes
+                    formatter = FuncFormatter(lambda x, _: f"${x:,.0f}")
+                    ax.yaxis.set_major_formatter(formatter)
+                    
+                    plt.tight_layout()
+                    self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["temporal"]["graph_frame"], str(e))
+            
+            def generate_product_temporal_chart(self, period_type, periods):
+                """Genera gráfico temporal por producto mostrando top 5 con separación de ganancias/pérdidas."""
+                try:
+                    period_func_map = {
+                        "Día": "DATE(f.fecha_factura)",
+                        "Semana": "DATE_FORMAT(f.fecha_factura, '%Y-%u')",
+                        "Mes": "DATE_FORMAT(f.fecha_factura, '%Y-%m')",
+                        "Trimestre": "CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))",
+                        "Año": "YEAR(f.fecha_factura)"
+                    }
+                    
+                    period_func = period_func_map.get(period_type, "DATE_FORMAT(f.fecha_factura, '%Y-%m')")
+                    
+                    # Obtener top productos por ganancia total en el período
+                    self.cursor.execute(f"""
+                        SELECT 
+                            p.nombre_producto,
+                            SUM(vd.subtotal_con_descuento) - 
+                            COALESCE((SELECT SUM(c.cantidad_compra * c.precio_unitario_compra)
+                                     FROM compra c 
+                                     WHERE c.id_producto = p.id_producto
+                                     AND {period_func.replace('f.fecha_factura', 'c.fecha_compra')} IN ({','.join([f"'{per}'" for per in periods])})), 0) AS ganancia_total
+                        FROM producto p
+                        JOIN detalle_factura df ON p.id_producto = df.id_producto
+                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
+                        JOIN factura f ON df.id_factura = f.id_factura
+                        WHERE {period_func} IN ({','.join([f"'{per}'" for per in periods])})
+                        GROUP BY p.id_producto, p.nombre_producto
+                        ORDER BY ganancia_total DESC
+                        LIMIT 5
+                    """)
+                    
+                    top_products = [row['nombre_producto'] for row in self.cursor.fetchall()]
+                    
+                    if not top_products:
+                        self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
+                        return
+                    
+                    # Obtener datos detallados por período para los top productos
+                    products_in = ','.join([f"'{p}'" for p in top_products])
+                    
+                    self.cursor.execute(f"""
+                        SELECT 
+                            {period_func} AS periodo,
+                            p.nombre_producto,
+                            SUM(vd.subtotal_con_descuento) - 
+                            COALESCE((SELECT SUM(c.cantidad_compra * c.precio_unitario_compra)
+                                     FROM compra c 
+                                     WHERE c.id_producto = p.id_producto
+                                     AND {period_func.replace('f.fecha_factura', 'c.fecha_compra')} = periodo), 0) AS ganancia
+                        FROM producto p
+                        JOIN detalle_factura df ON p.id_producto = df.id_producto
+                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
+                        JOIN factura f ON df.id_factura = f.id_factura
+                        WHERE {period_func} IN ({','.join([f"'{per}'" for per in periods])})
+                        AND p.nombre_producto IN ({products_in})
+                        GROUP BY {period_func}, p.id_producto, p.nombre_producto
+                        ORDER BY periodo, ganancia DESC
+                    """)
+                    
+                    data = self.cursor.fetchall()
+                    
+                    if not data:
+                        self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
+                        return
+                    
+                    # Organizar datos
+                    period_data = defaultdict(dict)
+                    for row in data:
+                        period_data[row['periodo']][row['nombre_producto']] = float(row['ganancia'] or 0)
+                    
+                    # Crear gráfico
+                    fig, ax = plt.subplots(figsize=(14, 8))
+                    
+                    periods_sorted = sorted(periods)
+                    x = np.arange(len(periods_sorted))
+                    width = 0.15
+                    colors = ['#A5D6A7', '#90CAF9', '#FFE082', '#CE93D8', '#F48FB1']
+                    
+                    # Separar por productos y por signo (ganancia/pérdida)
+                    for i, product in enumerate(top_products):
+                        product_short = product[:15] + '...' if len(product) > 15 else product
+                        gains = []
+                        losses = []
+                        
+                        for period in periods_sorted:
+                            value = period_data.get(period, {}).get(product, 0)
+                            gains.append(max(0, value))
+                            losses.append(min(0, value))
+                        
+                        # Barras para ganancias
+                        if any(g > 0 for g in gains):
+                            bars_gain = ax.bar(x + i * width, gains, width, 
+                                             label=f'{product_short} (+)', 
+                                             color=colors[i % len(colors)], alpha=0.8)
+                            
+                            # Etiquetas para ganancias
+                            for j, (bar, value) in enumerate(zip(bars_gain, gains)):
+                                if value > 0:
+                                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(gains) * 0.01,
+                                           f'${value:,.0f}', ha='center', va='bottom', fontsize=8, rotation=90)
+                        
+                        # Barras para pérdidas
+                        if any(l < 0 for l in losses):
+                            bars_loss = ax.bar(x + i * width, losses, width,
+                                             label=f'{product_short} (-)',
+                                             color=colors[i % len(colors)], alpha=0.5, hatch='//')
+                            
+                            # Etiquetas para pérdidas
+                            for j, (bar, value) in enumerate(zip(bars_loss, losses)):
+                                if value < 0:
+                                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() - abs(min(losses)) * 0.01,
+                                           f'${abs(value):,.0f}', ha='center', va='top', fontsize=8, rotation=90)
+                    
+                    ax.set_xlabel(f'{period_type}', fontsize=12)
+                    ax.set_ylabel('Ganancia ($)', fontsize=12)
+                    ax.set_title(f'Top 5 Productos por {period_type}\nColores sólidos: Ganancias | Rayado: Pérdidas', 
+                               fontsize=14, fontweight='bold')
+                    ax.set_xticks(x + width * 2)
+                    ax.set_xticklabels(periods_sorted, rotation=45 if len(periods_sorted) > 3 else 0)
+                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+                    ax.grid(axis='y', alpha=0.3)
+                    ax.axhline(y=0, color='black', linewidth=1, alpha=0.5)
+                    
+                    # Formatear ejes
+                    formatter = FuncFormatter(lambda x, _: f"${x:,.0f}")
+                    ax.yaxis.set_major_formatter(formatter)
+                    
+                    plt.tight_layout()
+                    self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["temporal"]["graph_frame"], str(e))
+            
+            def generate_group_temporal_chart(self, period_type, periods):
+                """Genera gráfico temporal por grupo de clientes simplificado."""
+                try:
+                    period_func_map = {
+                        "Día": "DATE(f.fecha_factura)",
+                        "Semana": "DATE_FORMAT(f.fecha_factura, '%Y-%u')",
+                        "Mes": "DATE_FORMAT(f.fecha_factura, '%Y-%m')",
+                        "Trimestre": "CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))",
+                        "Año": "YEAR(f.fecha_factura)"
+                    }
+                    
+                    period_func = period_func_map.get(period_type, "DATE_FORMAT(f.fecha_factura, '%Y-%m')")
+                    
+                    self.cursor.execute(f"""
+                        SELECT 
+                            {period_func} AS periodo,
+                            g.clave_grupo,
+                            SUM(vd.subtotal_con_descuento) AS ventas_totales,
+                            COUNT(DISTINCT c.id_cliente) AS clientes_activos,
+                            COUNT(DISTINCT f.id_factura) AS facturas_emitidas
+                        FROM grupo g
+                        JOIN cliente c ON g.id_grupo = c.id_grupo
+                        JOIN factura f ON c.id_cliente = f.id_cliente
+                        JOIN detalle_factura df ON f.id_factura = df.id_factura
+                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
+                        WHERE {period_func} IN ({','.join([f"'{per}'" for per in periods])})
+                        GROUP BY {period_func}, g.id_grupo, g.clave_grupo
+                        ORDER BY periodo, ventas_totales DESC
+                    """)
+                    
+                    data = self.cursor.fetchall()
+                    
+                    if not data:
+                        self.show_no_data_message(self.tabs["temporal"]["graph_frame"])
+                        return
+                    
+                    # Organizar datos por grupo
+                    groups = list(set(row['clave_grupo'] for row in data))
+                    period_data = defaultdict(dict)
+                    client_data = defaultdict(dict)
+                    
+                    for row in data:
+                        period_data[row['periodo']][row['clave_grupo']] = float(row['ventas_totales'] or 0)
+                        client_data[row['periodo']][row['clave_grupo']] = int(row['clientes_activos'] or 0)
+                    
+                    # Crear gráfico
+                    fig, ax = plt.subplots(figsize=(14, 8))
+                    
+                    periods_sorted = sorted(periods)
+                    x = np.arange(len(periods_sorted))
+                    width = 0.8 / len(groups)
+                    colors = ['#A5D6A7', '#90CAF9', '#FFE082', '#CE93D8', '#F48FB1', '#FFAB91']
+                    
+                    bottom = np.zeros(len(periods_sorted))
+                    
+                    for i, group in enumerate(groups):
+                        values = []
+                        clients = []
+                        
+                        for period in periods_sorted:
+                            values.append(period_data.get(period, {}).get(group, 0))
+                            clients.append(client_data.get(period, {}).get(group, 0))
+                        
+                        # Barras apiladas
+                        bars = ax.bar(x, values, width * len(groups), bottom=bottom, 
+                                     label=group, color=colors[i % len(colors)], alpha=0.8)
+                        
+                        # Etiquetas con monto y número de clientes
+                        for j, (bar, value, client_count) in enumerate(zip(bars, values, clients)):
+                            if value > 0:
+                                y_pos = bottom[j] + value/2
+                                ax.text(bar.get_x() + bar.get_width()/2, y_pos,
+                                       f'${value:,.0f}\n({client_count} clientes)',
+                                       ha='center', va='center', fontsize=8, fontweight='bold')
+                        
+                        bottom += values
+                    
+                    ax.set_xlabel(f'{period_type}', fontsize=12)
+                    ax.set_ylabel('Ventas ($)', fontsize=12)
+                    ax.set_title(f'Ventas por Grupo de Clientes - {period_type}\nMonto total por grupo (sin desglose individual)', 
+                               fontsize=14, fontweight='bold')
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(periods_sorted, rotation=45 if len(periods_sorted) > 3 else 0)
+                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                    ax.grid(axis='y', alpha=0.3)
+                    
+                    # Formatear ejes
+                    formatter = FuncFormatter(lambda x, _: f"${x:,.0f}")
+                    ax.yaxis.set_major_formatter(formatter)
+                    
+                    plt.tight_layout()
+                    self.embed_plot(fig, self.tabs["temporal"]["graph_frame"])
+                    
+                except Exception as e:
+                    self.show_error_message(self.tabs["temporal"]["graph_frame"], str(e))
+                
             def generate_clients_chart(self):
                 """Genera gráfico de ventas por cliente con colores según tipo de cliente."""
                 try:
@@ -1030,16 +1096,22 @@ class AnalisisGananciasApp:
                     self.client_control_frame = ttk.Frame(frame)
                     self.client_control_frame.pack(fill="x", padx=10, pady=5)
                     
-                    # Obtener lista de clientes
+                    # Obtener lista de clientes usando vista
                     self.cursor.execute("""
-                        SELECT c.id_cliente, c.nombre_cliente 
+                        SELECT 
+                            c.id_cliente, 
+                            c.nombre_cliente,
+                            g.clave_grupo,
+                            tc.nombre_tipo
                         FROM cliente c
+                        JOIN grupo g ON c.id_grupo = g.id_grupo
+                        JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
                         ORDER BY c.nombre_cliente
                     """)
                     clientes = self.cursor.fetchall()
                     
                     # Crear opción "Ninguno"
-                    opciones_clientes = [c['nombre_cliente'] for c in clientes]
+                    opciones_clientes = [f"{c['nombre_cliente']} ({c['clave_grupo']})" for c in clientes]
                     opciones_clientes.insert(0, "Ninguno")
                     
                     # Variables para los combobox
@@ -1054,9 +1126,10 @@ class AnalisisGananciasApp:
                             self.client_control_frame,
                             textvariable=self.client_vars[i],
                             values=opciones_clientes,
-                            state="readonly"
+                            state="readonly",
+                            width=25
                         )
-                        combo.pack(side="left", padx=5)
+                        combo.pack(side="left", padx=2)
                         combo.bind("<<ComboboxSelected>>", lambda e, idx=i: self.update_client_selection(idx))
                     
                     # Frame para botones
@@ -1090,12 +1163,21 @@ class AnalisisGananciasApp:
                     if idx < len(self.selected_clients):
                         self.selected_clients.pop(idx)
                 else:
+                    # Extraer nombre del cliente (antes del paréntesis)
+                    nombre_cliente = selected_name.split(' (')[0]
+                    
                     # Buscar el cliente seleccionado
                     self.cursor.execute("""
-                        SELECT c.id_cliente, c.nombre_cliente 
-                        FROM cliente c 
+                        SELECT 
+                            c.id_cliente, 
+                            c.nombre_cliente,
+                            g.clave_grupo,
+                            tc.nombre_tipo
+                        FROM cliente c
+                        JOIN grupo g ON c.id_grupo = g.id_grupo
+                        JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
                         WHERE c.nombre_cliente = %s
-                    """, (selected_name,))
+                    """, (nombre_cliente,))
                     cliente = self.cursor.fetchone()
                     
                     if cliente:
@@ -1109,18 +1191,22 @@ class AnalisisGananciasApp:
                 self.update_clients_chart()
                 
             def load_top_clients(self):
-                 """Carga los top 5 clientes con más ventas."""
-                 try:
+                """Carga los top 5 clientes con más ventas usando vista."""
+                try:
                     self.cursor.execute("""
                         SELECT 
                             c.id_cliente, 
                             c.nombre_cliente,
+                            g.clave_grupo,
+                            tc.nombre_tipo,
                             SUM(vd.subtotal_con_descuento) AS total_vendido
                         FROM cliente c
-                        JOIN factura f ON f.id_cliente = c.id_cliente
-                        JOIN detalle_factura df ON df.id_factura = f.id_factura
+                        JOIN grupo g ON c.id_grupo = g.id_grupo
+                        JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
+                        JOIN factura f ON c.id_cliente = f.id_cliente
+                        JOIN detalle_factura df ON f.id_factura = df.id_factura
                         JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                        GROUP BY c.id_cliente
+                        GROUP BY c.id_cliente, c.nombre_cliente, g.clave_grupo, tc.nombre_tipo
                         ORDER BY total_vendido DESC
                         LIMIT 5
                     """)
@@ -1129,14 +1215,15 @@ class AnalisisGananciasApp:
                     # Actualizar los combobox
                     for i in range(5):
                         if i < len(top_clientes):
-                            self.client_vars[i].set(top_clientes[i]['nombre_cliente'])
+                            cliente_text = f"{top_clientes[i]['nombre_cliente']} ({top_clientes[i]['clave_grupo']})"
+                            self.client_vars[i].set(cliente_text)
                         else:
                             self.client_vars[i].set('Ninguno')
                     
                     self.selected_clients = top_clientes
                     self.update_clients_chart()
                     
-                 except Exception as e:
+                except Exception as e:
                     messagebox.showerror("Error", f"No se pudieron cargar los top clientes: {str(e)}")
                     
             def update_clients_chart(self):
@@ -1165,29 +1252,34 @@ class AnalisisGananciasApp:
                         self.show_no_data_message(self.tabs["clients"]["graph_frame"])
                         return
                     
-                    # Asignar colores pastel a cada tipo de cliente
-                    colores = ['#A5D6A7', '#90CAF9', '#FFE082', '#CE93D8', '#80CBC4']
-                    tipo_colores = {tipo['id_tipo_cliente']: colores[i % len(colores)] 
-                                for i, tipo in enumerate(tipos_cliente)}
+                    # Asignar colores a cada tipo de cliente
+                    colores = ['#A5D6A7', '#90CAF9', '#FFE082', '#CE93D8', '#80CBC4', '#F48FB1']
+                    tipo_colores = {tipo['nombre_tipo']: colores[i % len(colores)] 
+                                  for i, tipo in enumerate(tipos_cliente)}
                     
                     # Obtener datos de los clientes seleccionados
                     client_ids = [str(c['id_cliente']) for c in self.selected_clients]
+                    
+                    if not client_ids:
+                        self.show_no_data_message(self.tabs["clients"]["graph_frame"])
+                        return
+                    
                     self.cursor.execute(f"""
                         SELECT 
                             c.id_cliente,
-                            c.nombre_cliente as nombre,
-                            SUM(vd.subtotal_con_descuento) AS total_vendido,
-                            g.clave_grupo as grupo,
-                            c.id_tipo_cliente,
-                            tc.nombre_tipo as tipo_cliente
+                            c.nombre_cliente,
+                            g.clave_grupo,
+                            tc.nombre_tipo,
+                            tc.descuento,
+                            SUM(vd.subtotal_con_descuento) AS total_vendido
                         FROM cliente c
-                        JOIN factura f ON f.id_cliente = c.id_cliente
-                        JOIN detalle_factura df ON df.id_factura = f.id_factura
-                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                         JOIN grupo g ON c.id_grupo = g.id_grupo
-                        JOIN tipo_cliente tc ON c.id_tipo_cliente = tc.id_tipo_cliente
+                        JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
+                        JOIN factura f ON c.id_cliente = f.id_cliente
+                        JOIN detalle_factura df ON f.id_factura = df.id_factura
+                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
                         WHERE c.id_cliente IN ({','.join(client_ids)})
-                        GROUP BY c.id_cliente
+                        GROUP BY c.id_cliente, c.nombre_cliente, g.clave_grupo, tc.nombre_tipo, tc.descuento
                         ORDER BY total_vendido DESC
                     """)
                     data = self.cursor.fetchall()
@@ -1196,44 +1288,42 @@ class AnalisisGananciasApp:
                         self.show_no_data_message(self.tabs["clients"]["graph_frame"])
                         return
                     
-                    fig, ax = plt.subplots(figsize=(12, 6))
+                    fig, ax = plt.subplots(figsize=(14, 8))
                     
                     # Formateador para valores monetarios
                     formatter = FuncFormatter(lambda x, _: f"${x:,.2f}")
                     ax.yaxis.set_major_formatter(formatter)
                     
-                    clients = [f"{d['nombre'][:15]}\n({d['grupo']})" for d in data]
-                    amounts = [self.convert_decimal(d['total_vendido']) for d in data]
-                    colors = [tipo_colores[d['id_tipo_cliente']] for d in data]
+                    clients = [f"{d['nombre_cliente'][:20]}\n({d['clave_grupo']}) - Desc: {d['descuento']}%" 
+                              for d in data]
+                    amounts = [float(d['total_vendido'] or 0) for d in data]
+                    colors = [tipo_colores.get(d['nombre_tipo'], '#CCCCCC') for d in data]
                     
                     bars = ax.bar(clients, amounts, color=colors)
-                    ax.set_title("Ventas por Cliente - Colores por Tipo de Cliente")
-                    ax.set_ylabel("Total Vendido")
+                    ax.set_title("Ventas por Cliente Seleccionado\nColores por Tipo de Cliente - Descuentos Aplicados", 
+                               fontsize=14, fontweight='bold')
+                    ax.set_ylabel("Total Vendido ($)", fontsize=12)
                     
                     # Añadir etiquetas de valor
                     max_amount = max(amounts) if amounts else 0
-                    label_offset = max_amount * 0.05
-                    
-                    for bar, amount in zip(bars, amounts):
+                    for bar, amount, cliente_data in zip(bars, amounts, data):
                         height = bar.get_height()
                         ax.text(
                             bar.get_x() + bar.get_width()/2., 
-                            height + label_offset,
+                            height + max_amount * 0.01,
                             f"${amount:,.2f}",
                             ha='center', 
                             va='bottom',
-                            fontsize=8
+                            fontsize=10,
+                            fontweight='bold'
                         )
                     
                     # Crear leyenda con los tipos de cliente
-                    legend_patches = [mpatches.Patch(color=tipo_colores[tipo['id_tipo_cliente']], 
-                                                    label=tipo['nombre_tipo']) 
-                                    for tipo in tipos_cliente]
-                    ax.legend(handles=legend_patches)
+                    legend_patches = [mpatches.Patch(color=color, label=tipo) 
+                                    for tipo, color in tipo_colores.items()]
+                    ax.legend(handles=legend_patches, bbox_to_anchor=(1.05, 1), loc='upper left')
                     
-                    # Ajustar límites para las etiquetas
-                    ax.set_ylim(0, max_amount + label_offset * 2)
-                    
+                    ax.grid(axis='y', alpha=0.3)
                     plt.xticks(rotation=45, ha='right')
                     plt.tight_layout()
                     self.embed_plot(fig, self.tabs["clients"]["graph_frame"])
@@ -1242,22 +1332,25 @@ class AnalisisGananciasApp:
                     self.show_error_message(self.tabs["clients"]["graph_frame"], str(e))
                     
             def generate_groups_chart(self):
-                """Genera gráfico de ventas por grupo de clientes con detalles por cliente."""
+                """Genera gráfico simplificado de ventas por grupo de clientes."""
                 try:
+                    # Usar vista vista_ganancias_por_grupo para datos simplificados
                     self.cursor.execute("""
                         SELECT 
-                            g.id_grupo,
                             g.clave_grupo,
+                            tc.nombre_tipo,
+                            tc.descuento,
                             COUNT(DISTINCT c.id_cliente) AS cantidad_clientes,
                             SUM(vd.subtotal_con_descuento) AS total_ventas,
-                            COUNT(DISTINCT f.id_factura) AS cantidad_facturas,
-                            SUM(vd.subtotal_con_descuento) / COUNT(DISTINCT c.id_cliente) AS ventas_por_cliente
+                            COUNT(DISTINCT f.id_factura) AS cantidad_facturas
                         FROM grupo g
+                        JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
                         LEFT JOIN cliente c ON g.id_grupo = c.id_grupo
                         LEFT JOIN factura f ON c.id_cliente = f.id_cliente
                         LEFT JOIN detalle_factura df ON f.id_factura = df.id_factura
                         LEFT JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                        GROUP BY g.id_grupo, g.clave_grupo
+                        GROUP BY g.id_grupo, g.clave_grupo, tc.nombre_tipo, tc.descuento
+                        HAVING total_ventas > 0
                         ORDER BY total_ventas DESC
                     """)
                     grupos = self.cursor.fetchall()
@@ -1266,95 +1359,46 @@ class AnalisisGananciasApp:
                         self.show_no_data_message(self.tabs["groups"]["container"])
                         return
                     
-                    # Obtener datos de clientes por grupo
-                    self.cursor.execute("""
-                        SELECT 
-                            g.clave_grupo,
-                            c.nombre_cliente,
-                            SUM(vd.subtotal_con_descuento) AS ventas_cliente
-                        FROM grupo g
-                        JOIN cliente c ON g.id_grupo = c.id_grupo
-                        JOIN factura f ON c.id_cliente = f.id_cliente
-                        JOIN detalle_factura df ON f.id_factura = df.id_factura
-                        JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                        GROUP BY g.clave_grupo, c.id_cliente, c.nombre_cliente
-                        ORDER BY g.clave_grupo, ventas_cliente DESC
-                    """)
-                    clientes_por_grupo = self.cursor.fetchall()
+                    fig, ax = plt.subplots(figsize=(12, 8))
                     
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    
-                    # Colores pastel
+                    # Colores diferenciados
                     colors = ['#A5D6A7', '#90CAF9', '#FFE082', '#CE93D8', '#80CBC4', '#F48FB1']
                     
-                    # Preparar datos para el gráfico
-                    group_names = [g['clave_grupo'] for g in grupos]
-                    group_totals = [self.convert_decimal(g['total_ventas']) for g in grupos]
-                    group_clients = [g['cantidad_clientes'] for g in grupos]
+                    # Preparar datos
+                    group_names = [f"{g['clave_grupo']}\n({g['nombre_tipo']})" for g in grupos]
+                    group_totals = [float(g['total_ventas'] or 0) for g in grupos]
+                    group_clients = [int(g['cantidad_clientes'] or 0) for g in grupos]
+                    group_invoices = [int(g['cantidad_facturas'] or 0) for g in grupos]
                     
                     # Gráfico de barras para los grupos
                     bars = ax.bar(group_names, group_totals, color=colors[:len(group_names)])
                     
-                    # Añadir etiquetas con el total del grupo y cantidad de clientes
-                    for bar, total, clients in zip(bars, group_totals, group_clients):
+                    # Añadir etiquetas informativas en la parte superior
+                    for bar, total, clients, invoices, grupo in zip(bars, group_totals, group_clients, group_invoices, grupos):
                         height = bar.get_height()
-                        ax.text(bar.get_x() + bar.get_width()/2., height,
-                               f"Total: ${total:,.2f}\nClientes: {clients}",
-                               ha='center', va='bottom')
+                        descuento = float(grupo['descuento'] or 0)
+                        
+                        # Etiqueta principal con monto
+                        ax.text(bar.get_x() + bar.get_width()/2., height + max(group_totals) * 0.01,
+                               f"${total:,.0f}",
+                               ha='center', va='bottom', fontsize=11, fontweight='bold')
+                        
+                        # Etiqueta secundaria con información del grupo
+                        ax.text(bar.get_x() + bar.get_width()/2., height * 0.5,
+                               f"{clients} clientes\n{invoices} facturas\nDesc: {descuento}%",
+                               ha='center', va='center', fontsize=9, 
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
                     
-                    # Preparar datos para las porciones de clientes
-                    bottom = None
-                    for i, grupo in enumerate(grupos):
-                        grupo_clientes = [c for c in clientes_por_grupo if c['clave_grupo'] == grupo['clave_grupo']]
-                        
-                        if not grupo_clientes:
-                            continue
-                        
-                        # Tomar los 5 clientes principales y agrupar el resto como "Otros"
-                        top_clientes = grupo_clientes[:5]
-                        otros = sum(c['ventas_cliente'] for c in grupo_clientes[5:]) if len(grupo_clientes) > 5 else 0
-                        
-                        # Valores y etiquetas
-                        valores = [self.convert_decimal(c['ventas_cliente']) for c in top_clientes]
-                        if otros > 0:
-                            valores.append(self.convert_decimal(otros))
-                        
-                        etiquetas = [c['nombre_cliente'][:15] + '...' if len(c['nombre_cliente']) > 15 else c['nombre_cliente'] 
-                                   for c in top_clientes]
-                        if otros > 0:
-                            etiquetas.append('Otros')
-                        
-                        # Colores para las porciones
-                        porcion_colores = [colors[(i + j) % len(colors)] for j in range(len(valores))]
-                        
-                        # Gráfico de barras apiladas para cada grupo
-                        if bottom is None:
-                            bottom = [0] * len(group_names)
-                        
-                        for j, (valor, etiqueta, color) in enumerate(zip(valores, etiquetas, porcion_colores)):
-                            # Solo dibujar en la barra del grupo correspondiente
-                            valores_barra = [0] * len(group_names)
-                            valores_barra[i] = valor
-                            
-                            ax.bar(group_names, valores_barra, color=color, label=etiqueta if i == 0 else "", 
-                                  bottom=bottom)
-                            
-                            # Añadir etiqueta con el porcentaje
-                            if valor > 0:
-                                porcentaje = (valor / group_totals[i]) * 100
-                                ax.text(i, bottom[i] + valor/2, 
-                                       f"{porcentaje:.1f}%", 
-                                       ha='center', va='center', color='black')
-                            
-                            bottom[i] += valor
+                    ax.set_title("Ventas Totales por Grupo de Clientes\nMonto total por grupo (simplificado)", 
+                               fontsize=14, fontweight='bold')
+                    ax.set_ylabel("Ventas Totales ($)", fontsize=12)
+                    ax.grid(axis='y', alpha=0.3)
                     
-                    ax.set_title("Ventas por Grupo de Clientes - Desglose por Cliente")
-                    ax.set_ylabel("Ventas ($)")
-                    ax.grid(True, linestyle='--', alpha=0.6)
+                    # Formatear eje Y
+                    formatter = FuncFormatter(lambda x, _: f"${x:,.0f}")
+                    ax.yaxis.set_major_formatter(formatter)
                     
-                    # Mover la leyenda fuera del gráfico
-                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-                    
+                    plt.xticks(rotation=45, ha='right')
                     plt.tight_layout()
                     self.embed_plot(fig, self.tabs["groups"]["container"])
                     
@@ -1372,10 +1416,8 @@ class AnalisisGananciasApp:
                     canvas.get_tk_widget().pack(fill="both", expand=True)
                     
                     # Añadir barra de herramientas
-                    from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
                     toolbar = NavigationToolbar2Tk(canvas, container)
                     toolbar.update()
-                    canvas.get_tk_widget().pack(fill="both", expand=True)
                     
                     # Guardar referencia para evitar garbage collection
                     if hasattr(self, 'current_figure'):
@@ -1430,7 +1472,7 @@ class AnalisisGananciasApp:
         StatsWindow(self.root, self.cursor, self.conn)
     
     def export_to_pdf(self):
-        """Exporta las estadísticas del día a un archivo PDF"""
+        """Exporta las estadísticas del día a un archivo PDF usando las nuevas vistas."""
         try:
             # Crear la carpeta reportes si no existe
             reportes_dir = "reportes"
@@ -1453,24 +1495,21 @@ class AnalisisGananciasApp:
             story.append(title)
             story.append(Spacer(1, 12))
             
-            # Obtener datos de ventas del día (usando vista con descuentos)
+            # Obtener datos de ventas del día usando vista
             self.cursor.execute("""
                 SELECT 
-                    p.nombre_producto,
-                    df.cantidad_factura as cantidad,
-                    p.unidad_producto as unidad,
-                    df.precio_unitario_venta,
+                    vd.nombre_producto,
+                    vd.cantidad_factura as cantidad,
+                    vd.unidad_producto as unidad,
+                    vd.precio_registrado as precio_unitario_venta,
                     vd.subtotal_con_descuento as subtotal,
-                    c.nombre_cliente as cliente_nombre,
-                    g.clave_grupo as tipo_cliente,
-                    tc.descuento as descuento_aplicado
-                FROM detalle_factura df
-                JOIN vista_detalle_factura_con_descuento vd ON df.id_detalle = vd.id_detalle
-                JOIN producto p ON df.id_producto = p.id_producto
-                JOIN factura f ON df.id_factura = f.id_factura
+                    c.nombre_cliente,
+                    vd.clave_grupo,
+                    vd.porcentaje_descuento as descuento_aplicado,
+                    f.fecha_factura
+                FROM vista_detalle_factura_con_descuento vd
+                JOIN factura f ON vd.id_factura = f.id_factura
                 JOIN cliente c ON f.id_cliente = c.id_cliente
-                JOIN grupo g ON c.id_grupo = g.id_grupo
-                JOIN tipo_cliente tc ON c.id_tipo_cliente = tc.id_tipo_cliente
                 WHERE DATE(f.fecha_factura) = CURDATE()
                 ORDER BY f.id_factura
             """)
@@ -1491,9 +1530,9 @@ class AnalisisGananciasApp:
             """)
             compras = self.cursor.fetchall()
             
-            # Calcular totales (usando subtotales con descuento)
-            total_ventas = sum(v['subtotal'] for v in ventas)
-            total_compras = sum(c['subtotal'] for c in compras)
+            # Calcular totales
+            total_ventas = sum(float(v['subtotal'] or 0) for v in ventas)
+            total_compras = sum(float(c['subtotal'] or 0) for c in compras)
             ganancia_neta = total_ventas - total_compras
             
             # Sección de Ventas
@@ -1501,17 +1540,17 @@ class AnalisisGananciasApp:
             
             if ventas:
                 # Preparar datos para la tabla de ventas
-                ventas_data = [["Producto", "Cantidad", "Unidad", "Precio/U", "Descuento", "Subtotal", "Cliente", "Tipo Cliente"]]
+                ventas_data = [["Producto", "Cantidad", "Unidad", "Precio/U", "Descuento", "Subtotal", "Cliente", "Grupo"]]
                 for v in ventas:
                     ventas_data.append([
                         v['nombre_producto'],
-                        f"{v['cantidad']:.2f}",
+                        f"{float(v['cantidad'] or 0):.2f}",
                         v['unidad'],
-                        f"${v['precio_unitario_venta']:.2f}",
-                        f"{v['descuento_aplicado'] or 0}%" if v['descuento_aplicado'] else "0%",
-                        f"${v['subtotal']:.2f}",
-                        v['cliente_nombre'],
-                        v['tipo_cliente'] if v['tipo_cliente'] else "Ninguno"
+                        f"${float(v['precio_unitario_venta'] or 0):.2f}",
+                        f"{float(v['descuento_aplicado'] or 0)}%",
+                        f"${float(v['subtotal'] or 0):.2f}",
+                        v['nombre_cliente'],
+                        v['clave_grupo'] or "Sin grupo"
                     ])
                 
                 # Crear tabla de ventas
@@ -1545,10 +1584,10 @@ class AnalisisGananciasApp:
                 for c in compras:
                     compras_data.append([
                         c['nombre_producto'],
-                        f"{c['cantidad']:.2f}",
+                        f"{float(c['cantidad'] or 0):.2f}",
                         c['unidad'],
-                        f"${c['precio_unitario_compra']:.2f}",
-                        f"${c['subtotal']:.2f}"
+                        f"${float(c['precio_unitario_compra'] or 0):.2f}",
+                        f"${float(c['subtotal'] or 0):.2f}"
                     ])
                 
                 # Crear tabla de compras
@@ -1577,8 +1616,9 @@ class AnalisisGananciasApp:
             story.append(Paragraph("Resumen Financiero", styles['Heading2']))
             story.append(Paragraph(f"Total Ventas (con descuentos): ${total_ventas:.2f}", styles['Normal']))
             story.append(Paragraph(f"Total Compras: ${total_compras:.2f}", styles['Normal']))
-            story.append(Paragraph(f"Ganancia Neta: ${ganancia_neta:.2f}", 
-                                style=styles['Heading3'] if ganancia_neta >= 0 else styles['Heading4']))
+            
+            ganancia_style = styles['Heading3'] if ganancia_neta >= 0 else styles['Normal']
+            story.append(Paragraph(f"Ganancia Neta: ${ganancia_neta:.2f}", ganancia_style))
             
             # Generar el PDF
             doc.build(story)
@@ -1590,7 +1630,8 @@ class AnalisisGananciasApp:
     def on_closing(self):
         """Clean up and close connection when closing the app"""
         try:
-            self.conn.close()
+            if hasattr(self, 'conn'):
+                self.conn.close()
         except:
             pass
         self.root.destroy()
@@ -1600,7 +1641,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     user_data = {
         'nombre_completo': 'Usuario Prueba',
-        'rol': 'usuario'  # Cambiar a 'admin' para probar productos especiales
+        'rol': 'usuario'  # Cambiar a 'admin' para probar funciones administrativas
     }
     app = AnalisisGananciasApp(root, user_data)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)

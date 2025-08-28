@@ -1,5 +1,5 @@
 # src/modules/receipts/components/orden_manager.py
-# Gestor de órdenes guardadas y manejo de folios reservados
+# Gestor de órdenes guardadas y manejo de folios reservados - Actualizado para nueva estructura
 
 import json
 import mysql.connector
@@ -57,22 +57,19 @@ class OrdenManager:
         siguiente_folio = None
         
         try:
-            # Obtener todos los folios usados (facturas, órdenes registradas Y órdenes guardadas activas)
+            # Obtener todos los folios usados (facturas y órdenes activas)
             query_folios_usados = """
                 SELECT folio_numero FROM (
-                    SELECT folio_numero FROM factura WHERE folio_numero IS NOT NULL
+                    SELECT id_factura as folio_numero FROM factura
                     UNION
                     SELECT folio_numero FROM ordenes_guardadas 
-                    WHERE estado = 'registrada' AND activo = TRUE
-                    UNION
-                    SELECT folio_numero FROM ordenes_guardadas 
-                    WHERE estado = 'guardada' AND activo = TRUE
+                    WHERE activo = TRUE
                 ) AS folios_usados
                 ORDER BY folio_numero
             """
             
             cursor.execute(query_folios_usados)
-            folios_usados = [row[0] for row in cursor.fetchall()]
+            folios_usados = [row[0] for row in cursor.fetchall() if row[0] is not None]
             
             if not folios_usados:
                 # No hay folios usados, empezar desde 1
@@ -125,12 +122,12 @@ class OrdenManager:
         disponible = False
         
         try:
-            # Verificar en facturas
-            query_factura = "SELECT COUNT(*) FROM factura WHERE folio_numero = %s"
+            # Verificar en facturas (usando id_factura como folio)
+            query_factura = "SELECT COUNT(*) FROM factura WHERE id_factura = %s"
             cursor.execute(query_factura, (folio,))
             count_factura = cursor.fetchone()[0]
             
-            # Verificar en órdenes guardadas y registradas
+            # Verificar en órdenes guardadas
             query_orden = """
                 SELECT COUNT(*) FROM ordenes_guardadas 
                 WHERE folio_numero = %s AND activo = TRUE
