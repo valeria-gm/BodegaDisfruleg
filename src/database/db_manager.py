@@ -1,6 +1,7 @@
 import mysql.connector
 from typing import Optional
 from src.auth.auth_manager import AuthManager
+from .cloud_config import get_db_config
 
 class DatabaseManager:
     """
@@ -122,13 +123,9 @@ def conectar():
     if db_manager.is_authenticated():
         return db_manager.get_connection()
     else:
-        # Para compatibilidad temporal, usar conexión administrativa
-        return mysql.connector.connect(
-            host="localhost",
-            user="jared",
-            password="zoibnG31!!EAEA",
-            database="disfruleg"
-        )
+        # Para compatibilidad temporal, usar configuración desde .env
+        config = get_db_config()
+        return mysql.connector.connect(**config)
 
 def get_authenticated_connection():
     """

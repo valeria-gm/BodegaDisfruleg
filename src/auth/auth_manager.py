@@ -4,23 +4,21 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import hashlib
 
+# Importar configuración de Cloud SQL
+from src.database.cloud_config import get_db_config
+
 class AuthManager:
-    def __init__(self, db_host="localhost", db_name="disfruleg"):
-        self.db_host = db_host
-        self.db_name = db_name
+    def __init__(self, db_host=None, db_name=None):
+        # Usar configuración de cloud_config en lugar de parámetros hardcodeados
+        self.db_config = get_db_config()
         self.max_intentos = 3
         self.bloqueo_minutos = 15
         
     def _get_admin_connection(self):
         """Obtener conexión administrativa para validar usuarios"""
         try:
-            # Usar conexión con privilegios para leer tabla usuarios_sistema
-            conn = mysql.connector.connect(
-                host=self.db_host,
-                user="jared",  # Usuario admin para validación
-                password="zoibnG31!!EAEA",
-                database=self.db_name
-            )
+            # Usar configuración desde .env (Cloud SQL o local)
+            conn = mysql.connector.connect(**self.db_config)
             return conn
         except mysql.connector.Error as e:
             raise Exception(f"Error de conexión administrativa: {e}")
@@ -222,7 +220,7 @@ class AuthManager:
     def create_user_connection(self, username: str, password: str) -> mysql.connector.MySQLConnection:
         """
         Crear conexión a MySQL usando credenciales del usuario
-        Esta función creará usuarios MySQL si no existen
+        Ahora usa la configuración de Cloud SQL
         """
         try:
             # Primero verificar si el usuario ya está autenticado en nuestro sistema
@@ -230,22 +228,10 @@ class AuthManager:
             if not auth_result['success']:
                 raise Exception(auth_result['message'])
             
-            # Para simplificar, usaremos las credenciales admin existentes
-            # pero podríamos crear usuarios MySQL específicos aquí
-            if username == 'jared':
-                mysql_password = 'zoibnG31!!EAEA'
-            elif username == 'valeria':
-                mysql_password = 'proYect0.593'
-            else:
-                # Para nuevos usuarios, usar credenciales admin por ahora
-                mysql_password = 'zoibnG31!!EAEA'
-            
-            conn = mysql.connector.connect(
-                host=self.db_host,
-                user=username if username in ['jared', 'valeria'] else 'jared',
-                password=mysql_password,
-                database=self.db_name
-            )
+            # Usar las credenciales de Cloud SQL para todos los usuarios
+            # Los usuarios de la aplicación se autentican contra la tabla usuarios_sistema
+            # pero las conexiones a MySQL usan las credenciales de Cloud SQL
+            conn = mysql.connector.connect(**self.db_config)
             
             return conn
             

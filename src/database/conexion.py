@@ -1,5 +1,6 @@
 import mysql.connector
 from mysql.connector import Error
+from .cloud_config import get_db_config, is_cloud_sql
 
 # Variable global para estado de disponibilidad
 db_available = False
@@ -17,20 +18,23 @@ def verify_db_availability():
 
 def conectar():
     try:
-        conn = mysql.connector.connect(
-            #unix_socket='/var/run/mysqld/mysqld.sock',
-            host='localhost',
-            port=3306,
-            user='jared',
-            password='zoibnG31!!EAEA',
-            database='disfruleg',
-            auth_plugin='mysql_native_password',
-            charset="utf8mb4",  # <-- Añade esto
-        collation="utf8mb4_unicode_ci"
-        )
+        config = get_db_config()
+        
+        print(f"Conectando a: {'Cloud SQL' if is_cloud_sql() else 'Local'}")
+        print(f"Host: {config['host']}")
+        
+        conn = mysql.connector.connect(**config)
+        
+        if conn.is_connected():
+            print("✓ Conexión exitosa a la base de datos")
+        
         return conn
+        
     except Error as e:
         print(f"Error de conexión: {e}")
+        return None
+    except Exception as e:
+        print(f"Error inesperado: {e}")
         return None
 
 # Verificar disponibilidad al importar

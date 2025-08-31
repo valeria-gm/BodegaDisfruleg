@@ -14,6 +14,19 @@ class ModuleLauncher:
     
     def __init__(self):
         self.modules = self._get_module_definitions()
+        
+        # Calculate absolute path to project root
+        # This file is in src/ui/module_launcher.py
+        # So we need to go up 2 levels: src/ui/ -> src/ -> project_root/
+        current_file = os.path.abspath(__file__)
+        self.project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+        self.launcher_script_path = os.path.join(self.project_root, "launch_module.py")
+        
+        debug_print(f"ModuleLauncher initialized:")
+        debug_print(f"  Current file: {current_file}")
+        debug_print(f"  Project root: {self.project_root}")
+        debug_print(f"  Launcher script: {self.launcher_script_path}")
+        debug_print(f"  Launcher exists: {os.path.exists(self.launcher_script_path)}")
     
     def _get_module_definitions(self):
         """Get all module definitions"""
@@ -93,43 +106,75 @@ class ModuleLauncher:
                 except ImportError:
                     debug_print("Session manager not available")
             
+            # Check if launcher script exists using absolute path
+            if not os.path.exists(self.launcher_script_path):
+                error_msg = f"No se encontró el launcher: {self.launcher_script_path}"
+                debug_print(f"ERROR: {error_msg}")
+                messagebox.showerror("Error", error_msg)
+                return False
+            
             # Prepare user data as JSON string
             user_data_json = ""
             if user_data:
                 import json
-                user_data_json = json.dumps(user_data)
+                user_data_json = json.dumps(user_data, ensure_ascii=False)
             
-            # Use the module launcher script
-            launcher_script = "launch_module.py"
-            if not os.path.exists(launcher_script):
-                messagebox.showerror("Error", f"No se encontró el launcher: {launcher_script}")
-                return False
-            
-            # Prepare command
-            cmd = [sys.executable, launcher_script, module_key]
+            # Prepare command with absolute paths
+            cmd = [sys.executable, self.launcher_script_path, module_key]
             if user_data_json:
                 cmd.append(user_data_json)
             
+            debug_print(f"Command: {' '.join(cmd[:3])}{'[USER_DATA]' if len(cmd) > 3 else ''}")
+            
+            # Change to project root directory before launching
+            old_cwd = os.getcwd()
+            os.chdir(self.project_root)
+            debug_print(f"Changed working directory to: {self.project_root}")
+            
             # Launch module
-            if sys.platform.startswith('win'):
-                subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:
-                subprocess.Popen(cmd)
+            try:
+                if sys.platform.startswith('win'):
+                    process = subprocess.Popen(
+                        cmd, 
+                        cwd=self.project_root,
+                        creationflags=subprocess.CREATE_NEW_CONSOLE
+                    )
+                else:
+                    process = subprocess.Popen(cmd, cwd=self.project_root)
                 
-            debug_print(f"Module {module_key} launched successfully")
-            return True
+                debug_print(f"Module {module_key} launched successfully (PID: {process.pid})")
+                return True
+                
+            finally:
+                # Always restore original working directory
+                os.chdir(old_cwd)
+                debug_print(f"Restored working directory to: {old_cwd}")
+                
+        except FileNotFoundError as e:
+            error_msg = f"No se pudo encontrar el archivo: {str(e)}"
+            debug_print(f"FileNotFoundError: {error_msg}")
+            messagebox.showerror("Error", error_msg)
+            return False
+            
+        except subprocess.SubprocessError as e:
+            error_msg = f"Error al lanzar el módulo: {str(e)}"
+            debug_print(f"SubprocessError: {error_msg}")
+            messagebox.showerror("Error", error_msg)
+            return False
             
         except Exception as e:
-            debug_print(f"Error launching module: {e}")
-            messagebox.showerror("Error", f"No se pudo abrir el módulo: {str(e)}")
+            error_msg = f"No se pudo abrir el módulo '{module_key}': {str(e)}"
+            debug_print(f"Unexpected error: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Error", error_msg)
             return False
     
     def validate_module_launcher(self):
         """Validate that the module launcher exists"""
-        launcher_script = "launch_module.py"
-        if not os.path.exists(launcher_script):
-            debug_print(f"Missing module launcher: {launcher_script}")
-            return False, [launcher_script]
+        if not os.path.exists(self.launcher_script_path):
+            debug_print(f"Missing module launcher: {self.launcher_script_path}")
+            return False, [self.launcher_script_path]
         
         debug_print("Module launcher validated successfully")
         return True, []
@@ -140,3 +185,13 @@ class ModuleLauncher:
             if module['module_key'] == module_key:
                 return module
         return None
+    
+    def get_launcher_status(self):
+        """Get detailed status information for debugging"""
+        return {
+            "launcher_exists": os.path.exists(self.launcher_script_path),
+            "launcher_path": self.launcher_script_path,
+            "project_root": self.project_root,
+            "current_working_directory": os.getcwd(),
+            "python_executable": sys.executable
+        }
