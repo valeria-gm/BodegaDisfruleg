@@ -1,2 +1,17 @@
+# Archivos sensibles - NO SUBIR
+.env
+.env.local
+.env.production
+
+# Archivos de Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# Archivos temporales
+.DS_Store
+Thumbs.dbusuarios.sql 
