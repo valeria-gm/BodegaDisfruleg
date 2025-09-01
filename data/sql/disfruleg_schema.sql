@@ -9,7 +9,7 @@ CREATE TABLE tipo_cliente (
     descuento DECIMAL(5,2) NOT NULL DEFAULT 0.00 CHECK (descuento BETWEEN 0 AND 100)-- porcentaje (ej. 10.00 = 10%)
 );
 
--- Tabla GRUPO (para descuentos)
+-- Tabla GRUPO 
 CREATE TABLE grupo (
     id_grupo INT AUTO_INCREMENT PRIMARY KEY,
     clave_grupo VARCHAR(50) NOT NULL UNIQUE,
@@ -56,7 +56,9 @@ CREATE TABLE factura (
     id_factura INT AUTO_INCREMENT PRIMARY KEY,
     fecha_factura DATE NOT NULL,
     id_cliente INT NOT NULL,
-    FOREIGN KEY (id_cliente) REFERENCES cliente(id_cliente)
+    folio_numero INT NOT NULL UNIQUE,
+    FOREIGN KEY (id_cliente) REFERENCES cliente(id_cliente),
+    INDEX idx_folio (folio_numero)
 );
 
 -- Tabla SECCION_FACTURA

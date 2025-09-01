@@ -1,44 +1,27 @@
 USE disfruleg;
 
--- Trigger para asignar folio único automático a órdenes
-DELIMITER //
-CREATE TRIGGER before_orden_insert
-BEFORE INSERT ON ordenes_guardadas
-FOR EACH ROW
-BEGIN
-    DECLARE next_folio INT;
-    
-    -- Si no se especifica folio, obtener el siguiente disponible
-    IF NEW.folio_numero IS NULL THEN
-        -- Obtener y actualizar el siguiente folio
-        SELECT next_val INTO next_folio FROM folio_sequence FOR UPDATE;
-        SET NEW.folio_numero = next_folio;
-        UPDATE folio_sequence SET next_val = next_val + 1;
-    END IF;
-END //
-DELIMITER ;
-
 -- Trigger para registrar deuda automáticamente al crear factura
 DELIMITER //
-CREATE TRIGGER after_factura_insert
-AFTER INSERT ON factura
+CREATE TRIGGER after_detalle_insert_update_deuda
+AFTER INSERT ON detalle_factura
 FOR EACH ROW
 BEGIN
-    -- Calcular el total de la factura
-    DECLARE total_factura DECIMAL(10,2);
-    
-    -- Usar un pequeño delay para asegurar que los detalles se hayan insertado
-    SELECT SUM(cantidad_factura * precio_unitario_venta) INTO total_factura
-    FROM detalle_factura
-    WHERE id_factura = NEW.id_factura;
-    
-    -- Solo insertar deuda si hay un total calculado
-    IF total_factura IS NOT NULL AND total_factura > 0 THEN
-        -- Insertar la deuda
-        INSERT INTO deuda (id_cliente, id_factura, monto, fecha_generada, monto_pagado, pagado, descripcion)
-        VALUES (NEW.id_cliente, NEW.id_factura, total_factura, CURDATE(), 0.00, FALSE,
-                CONCAT('Deuda por factura #', NEW.id_factura));
-    END IF;
+    -- Actualizar o crear la deuda cada vez que se agrega un detalle
+    INSERT INTO deuda (id_cliente, id_factura, monto, fecha_generada, monto_pagado, pagado, descripcion)
+    SELECT 
+        f.id_cliente,
+        f.id_factura,
+        SUM(df.cantidad_factura * df.precio_unitario_venta),
+        CURDATE(),
+        0.00,
+        FALSE,
+        CONCAT('Deuda por factura #', f.id_factura)
+    FROM factura f
+    JOIN detalle_factura df ON f.id_factura = df.id_factura
+    WHERE f.id_factura = NEW.id_factura
+    GROUP BY f.id_cliente, f.id_factura
+    ON DUPLICATE KEY UPDATE
+        monto = VALUES(monto);
 END //
 DELIMITER ;
 
@@ -67,42 +50,6 @@ BEGIN
     UPDATE producto 
     SET stock = stock + NEW.cantidad_compra
     WHERE id_producto = NEW.id_producto;
-END //
-DELIMITER ;
-
--- Trigger para actualizar stock al registrar ventas
-DELIMITER //
-CREATE TRIGGER after_detalle_factura_insert
-AFTER INSERT ON detalle_factura
-FOR EACH ROW
-BEGIN
-    UPDATE producto 
-    SET stock = stock - NEW.cantidad_factura
-    WHERE id_producto = NEW.id_producto;
-END //
-DELIMITER ;
-
--- Trigger para validar stock antes de vender (CORREGIDO)
-DELIMITER //
-CREATE TRIGGER before_detalle_factura_insert
-BEFORE INSERT ON detalle_factura
-FOR EACH ROW
-BEGIN
-    DECLARE current_stock DECIMAL(10,2);
-    DECLARE producto_nombre VARCHAR(250);
-    DECLARE mensaje_error TEXT;
-    
-    SELECT stock, nombre_producto INTO current_stock, producto_nombre
-    FROM producto 
-    WHERE id_producto = NEW.id_producto;
-    
-    IF current_stock < NEW.cantidad_factura THEN
-        SET mensaje_error = CONCAT('Stock insuficiente para el producto: ', producto_nombre, 
-                                  '. Stock disponible: ', current_stock, 
-                                  ', Cantidad solicitada: ', NEW.cantidad_factura);
-        SIGNAL SQLSTATE '45000' 
-        SET MESSAGE_TEXT = mensaje_error;
-    END IF;
 END //
 DELIMITER ;
 

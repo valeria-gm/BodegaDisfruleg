@@ -1,5 +1,5 @@
 # src/modules/receipts/components/ventana_ordenes.py
-# Ventana principal de gestión de órdenes guardadas - Actualizada para nueva estructura DB
+# Ventana principal de gestión de órdenes guardadas
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -129,11 +129,11 @@ class VentanaOrdenes:
         self.entry_busqueda = ttk.Entry(search_frame, textvariable=self.filtro_busqueda, width=15)
         self.entry_busqueda.pack(side="left", padx=(0, 5))
         
-        btn_buscar = ttk.Button(search_frame, text="Buscar", 
+        btn_buscar = ttk.Button(search_frame, text="🔍 Buscar", 
                                command=self._buscar_por_folio)
         btn_buscar.pack(side="left", padx=(0, 5))
         
-        btn_limpiar = ttk.Button(search_frame, text="Limpiar",
+        btn_limpiar = ttk.Button(search_frame, text="✖ Limpiar",
                                 command=self._limpiar_busqueda)
         btn_limpiar.pack(side="left")
         
@@ -143,14 +143,14 @@ class VentanaOrdenes:
         
         # Botón Nueva Orden (prominente)
         self.btn_nueva_orden = ttk.Button(actions_frame, 
-                                         text="Nueva Orden",
+                                         text="➕ Nueva Orden",
                                          command=self._nueva_orden,
                                          style="Accent.TButton")
         self.btn_nueva_orden.pack(side="right", padx=(10, 0))
         
         # Botón Actualizar
         btn_actualizar = ttk.Button(actions_frame, 
-                                   text="Actualizar",
+                                   text="🔄 Actualizar",
                                    command=self._actualizar_listas)
         btn_actualizar.pack(side="right", padx=(5, 0))
     
@@ -302,9 +302,9 @@ class VentanaOrdenes:
     def _mostrar_menu_acciones(self, event, folio):
         """Muestra menú contextual con acciones para una orden"""
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Editar", command=lambda: self._editar_orden(folio))
+        menu.add_command(label="✏️ Editar", command=lambda: self._editar_orden(folio))
         menu.add_separator()
-        menu.add_command(label="Eliminar", command=lambda: self._eliminar_orden(folio))
+        menu.add_command(label="🗑️ Eliminar", command=lambda: self._eliminar_orden(folio))
         
         try:
             menu.tk_popup(event.x_root, event.y_root)
@@ -349,8 +349,7 @@ class VentanaOrdenes:
     def _on_filtro_changed(self, *args):
         """Maneja cambios en el filtro de búsqueda"""
         # Auto-filtrar después de un breve delay
-        if hasattr(self, '_filter_job'):
-            self.root.after_cancel(self._filter_job)
+        self.root.after_cancel(getattr(self, '_filter_job', None))
         self._filter_job = self.root.after(300, self._aplicar_filtro)
     
     def _buscar_por_folio(self):
@@ -444,12 +443,17 @@ class VentanaOrdenes:
                 folio_str = f"{orden['folio_numero']:06d}"
                 cliente = orden['nombre_cliente']
                 total = f"${orden['total_estimado']:.2f}"
-                fecha = orden.get('fecha_modificacion_str', 'N/A')
+                
+                # Formatear fecha correctamente (sin tiempo si es solo fecha)
+                fecha_mod = orden.get('fecha_modificacion_str', 'N/A')
+                if fecha_mod and ' ' in fecha_mod:
+                    fecha_mod = fecha_mod.split(' ')[0]  # Solo la parte de la fecha
+                
                 usuario = orden['usuario_creador']
                 acciones = "[Clic para acciones]"
                 
                 self.tree_activas.insert("", "end", values=(
-                    folio_str, cliente, total, fecha, usuario, acciones
+                    folio_str, cliente, total, fecha_mod, usuario, acciones
                 ))
             
             # Actualizar contador
@@ -473,11 +477,16 @@ class VentanaOrdenes:
                 folio_str = f"{orden['folio_numero']:06d}"
                 cliente = orden['nombre_cliente']
                 total = f"${orden['total_estimado']:.2f}"
-                fecha = orden.get('fecha_modificacion_str', 'N/A')
+                
+                # Formatear fecha correctamente (sin tiempo si es solo fecha)
+                fecha_reg = orden.get('fecha_creacion_str', 'N/A')
+                if fecha_reg and ' ' in fecha_reg:
+                    fecha_reg = fecha_reg.split(' ')[0]  # Solo la parte de la fecha
+                
                 usuario = orden['usuario_creador']
                 
                 self.tree_historial.insert("", "end", values=(
-                    folio_str, cliente, total, fecha, usuario
+                    folio_str, cliente, total, fecha_reg, usuario
                 ))
             
             # Actualizar contador
@@ -499,7 +508,7 @@ class VentanaOrdenes:
         """Fuerza la actualización de las listas desde el exterior"""
         try:
             self._actualizar_listas()
-            print("Lista de órdenes actualizada desde ventana externa")
+            print("🔄 Lista de órdenes actualizada desde ventana externa")
         except Exception as e:
             print(f"Error al forzar actualización: {e}")
     
@@ -512,7 +521,7 @@ class VentanaOrdenes:
     
     def _on_orden_cambiada(self, event):
         """Maneja el evento personalizado de orden cambiada"""
-        print("Evento OrdenCambiada recibido en VentanaOrdenes")
+        print("📨 Evento OrdenCambiada recibido en VentanaOrdenes")
         self.forzar_actualizacion()
     
     # ==================== AUTO-REFRESH ====================

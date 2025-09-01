@@ -1,5 +1,5 @@
 # carrito_module_mejorado.py
-# Versión modificada para una visualización de carrito más clara.
+# Versión modificada para compatibilidad con nueva estructura de BD
 
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -14,12 +14,12 @@ class SeccionCarrito:
 
 class ItemCarrito:
     """Representa un item en el carrito"""
-    # ✅ CORREGIDO: Agregado unidad_producto al constructor
-    def __init__(self, nombre_producto: str, cantidad: float, precio_unitario: float, unidad_producto: str, seccion_id: Optional[str] = None):
+    def __init__(self, id_producto: int, nombre_producto: str, cantidad: float, precio_unitario: float, unidad_producto: str, seccion_id: Optional[str] = None):
+        self.id_producto = id_producto
         self.nombre_producto = nombre_producto
         self.cantidad = cantidad
         self.precio_unitario = precio_unitario
-        self.unidad_producto = unidad_producto  # ✅ Ahora funciona porque está en el constructor
+        self.unidad_producto = unidad_producto
         self.seccion_id = seccion_id
         self.subtotal = cantidad * precio_unitario
 
@@ -92,14 +92,10 @@ class CarritoConSecciones:
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
-        # --- INICIO DE MODIFICACIÓN ---
         # Vincular eventos de clic y doble clic
         self.tree.bind("<ButtonRelease-1>", self._handle_click)
-        self.tree.bind("<Double-1>", self._handle_double_click) # 🖱️ Nuevo evento
-        # --- FIN DE MODIFICACIÓN ---
+        self.tree.bind("<Double-1>", self._handle_double_click)
 
-    # --- INICIO DE MODIFICACIÓN ---
-    # 💡 Nueva función para manejar el doble clic
     def _handle_double_click(self, event):
         """Maneja el doble clic para editar la cantidad de un item."""
         
@@ -155,7 +151,6 @@ class CarritoConSecciones:
         entry.bind("<Return>", on_edit_done)
         entry.bind("<FocusOut>", on_edit_done)
         entry.bind("<Escape>", on_edit_cancel)
-    # --- FIN DE MODIFICACIÓN ---
 
     def _crear_seccion_defecto(self):
         """Crea una sección por defecto"""
@@ -186,32 +181,26 @@ class CarritoConSecciones:
         """Abre el diálogo de gestión de secciones"""
         GestorSecciones(self.parent, self)
 
-    def agregar_item(self, nombre_prod: str, cantidad: float, precio_unit: float, unidad_producto: str, seccion_id: Optional[str] = None):
+    def agregar_item(self, id_producto: int, nombre_prod: str, cantidad: float, precio_unit: float, unidad_producto: str, seccion_id: Optional[str] = None):
         """Añade o actualiza un producto en el carrito"""
         if self.sectioning_enabled:
             if seccion_id is None:
                 seccion_id = self._get_primera_seccion_id()
-            key = f"{nombre_prod}_{seccion_id}" if seccion_id else nombre_prod
+            # Usar ID de producto + sección como clave para evitar duplicados en diferentes secciones
+            key = f"{id_producto}_{seccion_id}" if seccion_id else str(id_producto)
         else:
-            key = nombre_prod
+            key = str(id_producto)
             seccion_id = None
         
         if key in self.items:
             self.items[key].cantidad += cantidad
             self.items[key].subtotal = self.items[key].cantidad * self.items[key].precio_unitario
         else:
-            # ✅ CORREGIDO: Ahora pasa los 5 parámetros en el orden correcto
-            self.items[key] = ItemCarrito(nombre_prod, cantidad, precio_unit, unidad_producto, seccion_id)
+            self.items[key] = ItemCarrito(id_producto, nombre_prod, cantidad, precio_unit, unidad_producto, seccion_id)
         
         self._actualizar_display()
         self._notificar_cambio()
 
-    def _mostrar_dialogo_seccion(self, nombre_prod: str, cantidad: float, precio_unit: float):
-        """Muestra diálogo para seleccionar sección"""
-        if not self.sectioning_enabled or not self.secciones:
-            # ✅ Esto necesitaría también la unidad, pero parece que no se usa
-            pass  # Esta función parece no usarse
-        
     def obtener_items(self):
         """Retorna una lista con todos los items del carrito (formato original)"""
         items_lista = []
@@ -222,6 +211,7 @@ class CarritoConSecciones:
                 f"${item.precio_unitario:.2f}",
                 f"${item.subtotal:.2f}",
                 item.unidad_producto,
+                item.id_producto  # Incluir ID para procesamiento posterior
             ])
         return items_lista
 
@@ -244,6 +234,7 @@ class CarritoConSecciones:
                         f"${item.precio_unitario:.2f}",
                         f"${item.subtotal:.2f}",
                         item.unidad_producto,
+                        item.id_producto  # Incluir ID para procesamiento posterior
                     ])
                     subtotal_seccion += item.subtotal
             
@@ -258,6 +249,10 @@ class CarritoConSecciones:
     def obtener_total(self):
         """Calcula y retorna el total de la compra"""
         return sum(item.subtotal for item in self.items.values())
+    
+    def obtener_cantidad_total(self):
+        """Calcula y retorna la cantidad total de productos"""
+        return sum(item.cantidad for item in self.items.values())
 
     def limpiar_carrito(self):
         """Elimina todos los productos del carrito"""
@@ -330,7 +325,7 @@ class CarritoConSecciones:
             for key, item in self.items.items():
                 self.tree.insert("", "end",
                                  text=item.nombre_producto,
-                                 values=(f"${item.cantidad:.2f}",
+                                 values=(f"{item.cantidad:.2f}",
                                          item.unidad_producto,
                                          f"${item.precio_unitario:.2f}",
                                          f"${item.subtotal:.2f}",
@@ -343,15 +338,15 @@ class CarritoConSecciones:
                 if items_seccion:
                     subtotal_seccion = sum(item.subtotal for item in items_seccion)
                     seccion_node = self.tree.insert("", "end", text=seccion.nombre,
-                                                  values=("", "", f"${subtotal_seccion:.2f}", ""),
+                                                  values=("", "", "", f"${subtotal_seccion:.2f}", ""),
                                                   tags=("seccion",), open=True)
                     
                     for key, item in self.items.items():
                         if item.seccion_id == seccion_id:
                             self.tree.insert(seccion_node, "end",
                                              text=item.nombre_producto,
-                                             values=(f"{item.cantidad:.2f}",        # Solo número
-                                                     item.unidad_producto,    # ✅ CORREGIDO: mostrar cantidad con unidad
+                                             values=(f"{item.cantidad:.2f}",
+                                                     item.unidad_producto,
                                                      f"${item.precio_unitario:.2f}",
                                                      f"${item.subtotal:.2f}",
                                                      "🗑️"),
@@ -388,8 +383,8 @@ class CarritoConSecciones:
 
 class DialogoSeccion:
     """Diálogo para seleccionar sección al agregar producto"""
-    def __init__(self, parent, secciones: List[SeccionCarrito], callback):
-        self.callback = callback
+    def __init__(self, parent, secciones: List[SeccionCarrito], on_seleccionar):
+        self.on_seleccionar = on_seleccionar
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Seleccionar Sección")
@@ -417,7 +412,7 @@ class DialogoSeccion:
     def _aceptar(self):
         nombre_seccion = self.seccion_var.get()
         if nombre_seccion in self.seccion_map:
-            self.callback(self.seccion_map[nombre_seccion])
+            self.on_seleccionar(self.seccion_map[nombre_seccion])
         self.dialog.destroy()
 
 class GestorSecciones:

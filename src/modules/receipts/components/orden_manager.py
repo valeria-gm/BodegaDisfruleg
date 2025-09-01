@@ -1,10 +1,10 @@
 # src/modules/receipts/components/orden_manager.py
-# Gestor de órdenes guardadas y manejo de folios reservados - Actualizado para nueva estructura
+# Gestor de órdenes guardadas y manejo de folios reservados - VERSIÓN ACTUALIZADA
 
 import json
 import mysql.connector
 from mysql.connector import Error
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple, Any
 from .database import conectar
 
@@ -38,12 +38,7 @@ class OrdenManager:
     
     def obtener_siguiente_folio_disponible(self) -> Optional[int]:
         """
-        Busca el menor folio disponible considerando gaps en la secuencia.
-        
-        Lógica:
-        1. Busca gaps en la secuencia de folios registrados
-        2. Si no hay gaps, usa MAX(folio_numero) + 1
-        3. Considera solo órdenes 'registradas' como permanentes
+        Obtiene el siguiente folio disponible usando la tabla folio_sequence.
         
         Returns:
             int: Siguiente folio disponible o None si hay error
@@ -57,48 +52,31 @@ class OrdenManager:
         siguiente_folio = None
         
         try:
-            # Obtener todos los folios usados (facturas y órdenes activas)
-            query_folios_usados = """
-                SELECT folio_numero FROM (
-                    SELECT id_factura as folio_numero FROM factura
-                    UNION
-                    SELECT folio_numero FROM ordenes_guardadas 
-                    WHERE activo = TRUE
-                ) AS folios_usados
-                ORDER BY folio_numero
-            """
+            # Usar tabla folio_sequence para obtener el siguiente folio
+            query = "SELECT next_val FROM folio_sequence WHERE id = 1 FOR UPDATE"
+            cursor.execute(query)
+            resultado = cursor.fetchone()
             
-            cursor.execute(query_folios_usados)
-            folios_usados = [row[0] for row in cursor.fetchall() if row[0] is not None]
-            
-            if not folios_usados:
-                # No hay folios usados, empezar desde 1
-                siguiente_folio = 1
+            if resultado:
+                siguiente_folio = resultado[0]
+                
+                # Actualizar el siguiente valor
+                update_query = "UPDATE folio_sequence SET next_val = next_val + 1 WHERE id = 1"
+                cursor.execute(update_query)
+                conn.commit()
+                
+                print(f"Siguiente folio disponible: {siguiente_folio}")
             else:
-                # Buscar gaps en la secuencia
-                folio_encontrado = None
-                
-                # Verificar si falta el folio 1
-                if folios_usados[0] > 1:
-                    folio_encontrado = 1
-                else:
-                    # Buscar gaps en la secuencia
-                    for i in range(len(folios_usados) - 1):
-                        gap = folios_usados[i + 1] - folios_usados[i]
-                        if gap > 1:
-                            folio_encontrado = folios_usados[i] + 1
-                            break
-                
-                if folio_encontrado:
-                    siguiente_folio = folio_encontrado
-                else:
-                    # No hay gaps, usar el siguiente después del máximo
-                    siguiente_folio = max(folios_usados) + 1
-            
-            print(f"Siguiente folio disponible: {siguiente_folio}")
+                # Inicializar la secuencia si no existe
+                insert_query = "INSERT INTO folio_sequence (id, next_val) VALUES (1, 1)"
+                cursor.execute(insert_query)
+                conn.commit()
+                siguiente_folio = 1
+                print(f"Inicializado folio_sequence, primer folio: {siguiente_folio}")
             
         except Error as e:
             print(f"Error al obtener siguiente folio: {e}")
+            conn.rollback()
         finally:
             cursor.close()
         
@@ -122,12 +100,7 @@ class OrdenManager:
         disponible = False
         
         try:
-            # Verificar en facturas (usando id_factura como folio)
-            query_factura = "SELECT COUNT(*) FROM factura WHERE id_factura = %s"
-            cursor.execute(query_factura, (folio,))
-            count_factura = cursor.fetchone()[0]
-            
-            # Verificar en órdenes guardadas
+            # Verificar en órdenes guardadas activas
             query_orden = """
                 SELECT COUNT(*) FROM ordenes_guardadas 
                 WHERE folio_numero = %s AND activo = TRUE
@@ -135,7 +108,7 @@ class OrdenManager:
             cursor.execute(query_orden, (folio,))
             count_orden = cursor.fetchone()[0]
             
-            disponible = (count_factura + count_orden) == 0
+            disponible = count_orden == 0
             
         except Error as e:
             print(f"Error al verificar disponibilidad del folio {folio}: {e}")
@@ -328,9 +301,11 @@ class OrdenManager:
                     og.usuario_creador,
                     og.fecha_creacion,
                     og.fecha_modificacion,
-                    og.total_estimado
+                    og.total_estimado,
+                    f.id_factura as id_venta_asociada
                 FROM ordenes_guardadas og
                 JOIN cliente c ON og.id_cliente = c.id_cliente
+                LEFT JOIN factura f ON og.folio_numero = f.id_factura
                 WHERE og.estado = 'registrada' AND og.activo = TRUE
             """
             
@@ -384,9 +359,12 @@ class OrdenManager:
             query = """
                 SELECT 
                     og.*,
-                    c.nombre_cliente
+                    c.nombre_cliente,
+                    t.nombre_tipo as tipo_cliente
                 FROM ordenes_guardadas og
                 JOIN cliente c ON og.id_cliente = c.id_cliente
+                JOIN grupo g ON c.id_grupo = g.id_grupo
+                JOIN tipo_cliente t ON g.id_tipo_cliente = t.id_tipo_cliente
                 WHERE og.folio_numero = %s AND og.activo = TRUE
             """
             
@@ -463,12 +441,13 @@ class OrdenManager:
         finally:
             cursor.close()
     
-    def marcar_como_registrada(self, folio: int) -> bool:
+    def marcar_como_completada(self, folio: int, id_venta: int) -> bool:
         """
         Marca una orden como 'registrada' cuando se completa la venta.
         
         Args:
             folio: Número de folio de la orden
+            id_venta: ID de la venta asociada en la tabla factura
             
         Returns:
             bool: True si se marcó exitosamente, False si falló
@@ -490,7 +469,7 @@ class OrdenManager:
             
             if cursor.rowcount > 0:
                 conn.commit()
-                print(f"Orden {folio} marcada como registrada")
+                print(f"Orden {folio} marcada como registrada (venta ID: {id_venta})")
                 return True
             else:
                 print(f"No se encontró orden guardada con folio {folio}")
@@ -531,9 +510,10 @@ class OrdenManager:
                     'nombre': seccion.nombre
                 }
             
-            # Serializar items
+            # Serializar items - ¡ACTUALIZADO para incluir id_producto!
             for key, item in carrito_obj.items.items():
                 datos['items'][key] = {
+                    'id_producto': item.id_producto,  # Añadir ID del producto
                     'nombre_producto': item.nombre_producto,
                     'cantidad': item.cantidad,
                     'precio_unitario': item.precio_unitario,
@@ -576,14 +556,20 @@ class OrdenManager:
                 seccion = SeccionCarrito(seccion_data['id'], seccion_data['nombre'])
                 carrito_obj.secciones[seccion_id] = seccion
             
-            # Cargar items
+            # Cargar items - ¡CORREGIDO!
             items_data = datos_json.get('items', {})
             for key, item_data in items_data.items():
                 from .carrito_module import ItemCarrito
+                
+                # Asegurar que los tipos numéricos sean correctos
+                cantidad = float(item_data['cantidad']) if isinstance(item_data['cantidad'], (int, float, str)) else 0.0
+                precio_unitario = float(item_data['precio_unitario']) if isinstance(item_data['precio_unitario'], (int, float, str)) else 0.0
+                
                 item = ItemCarrito(
+                    item_data.get('id_producto', 0),  # Añadir ID del producto
                     item_data['nombre_producto'],
-                    item_data['cantidad'],
-                    item_data['precio_unitario'],
+                    cantidad,
+                    precio_unitario,
                     item_data['unidad_producto'],
                     item_data.get('seccion_id')
                 )
@@ -598,6 +584,8 @@ class OrdenManager:
             
         except Exception as e:
             print(f"Error al cargar carrito desde JSON: {e}")
+            import traceback
+            traceback.print_exc()  # Para debugging detallado
             return False
     
     # ==================== CLEANUP ====================

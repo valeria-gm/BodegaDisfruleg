@@ -255,16 +255,25 @@ class ComprasApp:
 
     def registrar_compra(self):
         """Registrar una nueva compra"""
-        # Validar campos
+        # Validar campos existentes...
         if not self.selected_product.get():
             messagebox.showerror("Error", "Debe seleccionar un producto")
             return
-            
+        
+        # NUEVA VALIDACIÓN DE FECHA
+        fecha = self.fecha_var.get()
+        fecha_valida, resultado = self.validar_fecha(fecha)
+        
+        if not fecha_valida:
+            messagebox.showerror("Error de Fecha", resultado)
+            return
+        
+        # Usar la fecha validada en lugar de la fecha actual
+        fecha_compra = resultado.strftime("%Y-%m-%d")
+        
         try:
-            # Convertir a Decimal para evitar problemas con float
             cantidad = Decimal(str(self.cantidad_var.get()))
             precio = Decimal(str(self.precio_var.get()))
-            fecha = self.fecha_var.get()
             
             if cantidad <= Decimal('0'):
                 messagebox.showerror("Error", "La cantidad debe ser mayor que 0")
@@ -298,7 +307,7 @@ class ComprasApp:
                 return  # Usuario canceló o falló la autenticación
         
         try:
-            # Insertar en la base de datos
+            # Insertar en la base de datos CON LA FECHA ESPECIFICADA
             # NOTA: Los triggers manejan automáticamente la actualización del stock
             self.cursor.execute("""
                 INSERT INTO compra (fecha_compra, id_producto, cantidad_compra, precio_unitario_compra)
@@ -499,6 +508,20 @@ class ComprasApp:
                  command=popup.destroy, 
                  bg="#f44336", fg="white", padx=15, pady=5).pack(side="left", padx=10)
     
+    def validar_fecha(self, fecha_str):
+        """Valida que la fecha esté en formato correcto y no sea futura"""
+        try:
+            fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
+            fecha_actual = datetime.now()
+            
+            # Permitir fechas pasadas y del día actual
+            if fecha <= fecha_actual:
+                return True, fecha
+            else:
+                return False, "No se pueden registrar fechas futuras"
+        except ValueError:
+            return False, "Formato de fecha inválido. Use YYYY-MM-DD"
+
     def save_edit_compra(self, popup, compra_id, fecha, cantidad, precio):
         """Guardar cambios en la compra"""
         try:

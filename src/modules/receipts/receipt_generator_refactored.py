@@ -1,10 +1,12 @@
 # receipt_generator_refactored.py
-# Versión actualizada que integra el sistema de órdenes guardadas
+# Versión actualizada que integra el sistema de órdenes guardadas y nueva estructura de BD - CORREGIDA
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+from datetime import datetime, date
+import calendar
 from src.modules.receipts.components import database
-from src.modules.receipts.components import generador_pdf as generador_pdf
+from src.modules.receipts.components import generador_pdf
 from src.modules.receipts.components.carrito_module import CarritoConSecciones, DialogoSeccion
 from src.modules.receipts.components import generador_excel
 from src.modules.receipts.components.orden_manager import obtener_manager, OrdenManager
@@ -46,6 +48,7 @@ class ReciboAppMejorado:
         # Crear canvas scrolleable para todo el contenido
         self._setup_scrollable_interface()
 
+        # Obtener grupos de cliente 
         self.grupos_data = {nombre: g_id for g_id, nombre in database.obtener_grupos()}
         if not self.grupos_data:
             messagebox.showerror("Error de Base de Datos", "No se pudieron cargar los grupos de clientes.")
@@ -217,7 +220,7 @@ class ReciboAppMejorado:
         
         btn_agregar_tab = ttk.Button(
             info_frame, 
-            text="+ Agregar Nuevo Pedido", 
+            text="➕ Agregar Nuevo Pedido", 
             command=self._agregar_pestaña
         )
         btn_agregar_tab.pack(side="right")
@@ -225,7 +228,7 @@ class ReciboAppMejorado:
         # Información sobre secciones
         info_label = ttk.Label(
             frame_superior, 
-            text="Tip: Active 'Habilitar Secciones' para organizar productos por categorías",
+            text="💡 Tip: Active 'Habilitar Secciones' para organizar productos por categorías",
             font=("Arial", 9),
             foreground="gray"
         )
@@ -422,7 +425,7 @@ class ReciboAppMejorado:
 
         # --- VINCULAR EVENTOS ---
         widgets['combo_grupos'].bind("<<ComboboxSelected>>", 
-                                   lambda event, w=widgets: self._on_grupo_selected(event, w))
+                            lambda event, w=widgets: self._on_grupo_selected(event, w))
         widgets['btn_buscar'].config(command=lambda w=widgets: self._buscar_insumos(w))
         widgets['btn_procesar_venta'].config(command=lambda w=widgets: self._procesar_venta(w))
         widgets['tree_resultados'].bind("<Double-1>", 
@@ -544,6 +547,8 @@ class ReciboAppMejorado:
 
         except Exception as e:
             messagebox.showerror("Error", f"Error al guardar orden: {str(e)}")
+            import traceback
+            traceback.print_exc()  # Para debugging
     
     def _notificar_cambio_orden(self):
         """Notifica a la ventana principal sobre cambios en la orden"""
@@ -569,9 +574,13 @@ class ReciboAppMejorado:
             self.folio_actual = folio
             self.orden_guardada = True
 
-            # Restaurar cliente seleccionado
-            id_cliente = orden_data['id_cliente']
-            nombre_cliente = orden_data['nombre_cliente']
+            # Restaurar cliente seleccionado desde datos_carrito_obj
+            datos_carrito = orden_data.get('datos_carrito_obj', {})
+            cliente_info = datos_carrito.get('cliente_info', {})
+            
+            id_cliente = cliente_info.get('id_cliente')
+            nombre_cliente = cliente_info.get('nombre_cliente')
+            grupo_seleccionado = cliente_info.get('grupo_seleccionado')
             
             # Buscar y seleccionar el grupo del cliente
             grupo_encontrado = None
@@ -580,14 +589,25 @@ class ReciboAppMejorado:
                 if any(c_id == id_cliente for c_id, c_nombre in clientes):
                     grupo_encontrado = nombre_grupo
                     break
-            
+
             if grupo_encontrado:
                 # Seleccionar grupo
                 widgets['combo_grupos'].set(grupo_encontrado)
                 self._on_grupo_selected(None, widgets)
-                
-                # Seleccionar cliente
-                widgets['combo_clientes'].set(nombre_cliente)
+
+             # Esperar a que se carguen los clientes y luego seleccionar el correcto
+            def seleccionar_cliente():
+                if nombre_cliente in widgets['combo_clientes']['values']:
+                    widgets['combo_clientes'].set(nombre_cliente)
+                    # Actualizar el mapping de clientes
+                    if nombre_cliente not in widgets['clientes_map']:
+                        # Reconstruir el mapping si es necesario
+                        grupo_id = self.grupos_data[grupo_encontrado]
+                        clientes = database.obtener_clientes_por_grupo(grupo_id)
+                        widgets['clientes_map'] = {nombre: id_cliente for id_cliente, nombre in clientes}
+            
+            # Usar after para asegurar que el combobox esté poblado
+            self.root.after(100, seleccionar_cliente)
 
             # Restaurar estado del carrito
             datos_carrito_obj = orden_data.get('datos_carrito_obj')
@@ -728,419 +748,429 @@ class ReciboAppMejorado:
         try:
             id_cliente = widgets['clientes_map'][nombre_cliente]
             
-            # Preparar items para registrar en BD
-            if carrito.sectioning_enabled and len(carrito.secciones) > 1:
-                items_por_seccion = carrito.obtener_items_por_seccion()
-                secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
+            # Preparar items para registrar en BD - FORMATO CORREGIDO
+            items_para_bd = []
+            for item_key, item in carrito.items.items():
+                # Formato: [id_producto, nombre, precio, cantidad, subtotal]
+                items_para_bd.append([
+                    item.id_producto,  # ID del producto
+                    item.nombre_producto,
+                    item.precio_unitario,
+                    item.cantidad,
+                    item.subtotal
+                ])
+            
+            # Registrar venta en BD
+            resultado_venta = database.crear_factura_completa(id_cliente, items_para_bd)
+            
+            if resultado_venta and resultado_venta['id_factura']:
+                venta_id = resultado_venta['id_factura']
+                folio_factura = resultado_venta['folio_numero']
                 
-                if len(secciones_con_datos) > 1:
-                    items_simple = []
-                    for datos_seccion in secciones_con_datos.values():
-                        items_simple.extend(datos_seccion['items'])
-                    items_carrito = items_simple
+                # Si era una orden guardada, marcarla como completada
+                if self.folio_actual and self.orden_guardada:
+                    self.orden_manager.marcar_como_completada(self.folio_actual, venta_id)
+                
+                # Generar PDF automáticamente
+                self._generar_pdf_venta(widgets, venta_id, folio_factura)
+                
+                # Limpiar carrito después de venta exitosa
+                self._limpiar_carrito(widgets)
+                
+                # Si era una orden guardada, cerrar ventana
+                if self.folio_actual and self.orden_guardada:
+                    messagebox.showinfo("Venta Completada", 
+                                    f"Venta registrada exitosamente\n"
+                                    f"ID de factura: {venta_id}\n"
+                                    f"Folio: {folio_factura:06d}\n"
+                                    f"Orden {self.folio_actual:06d} marcada como completada.")
+                    
+                    # Notificar al padre sobre el cambio si estamos en contexto de launcher
+                    if self.is_launcher_context:
+                        self._notificar_cambio_orden()
+                        self.root.destroy()
                 else:
-                    items_carrito = carrito.obtener_items()
+                    messagebox.showinfo("Venta Exitosa", 
+                                      f"Venta registrada exitosamente\n"
+                                      f"ID: {venta_id}\n"
+                                      f"Folio: {folio_factura:06d}")
             else:
-                items_carrito = carrito.obtener_items()
-            
-            # Si es una orden guardada, usar su folio y marcarla como registrada
-            if self.folio_actual and self.orden_guardada:
-                # Registrar venta en base de datos con el folio específico
-                resultado_factura = database.crear_factura_completa(id_cliente, items_carrito, self.folio_actual)
+                messagebox.showerror("Error", "No se pudo registrar la venta en la base de datos.")
                 
-                if resultado_factura:
-                    # Marcar orden como registrada
-                    self.orden_manager.marcar_como_registrada(self.folio_actual)
-                    
-                    id_factura = resultado_factura['id_factura']
-                    folio_numero = self.folio_actual  # Usar el folio de la orden
-                    
-                    mensaje_exito = (f"Orden {self.folio_actual:06d} registrada como venta!\n\n"
-                                   f"Factura ID: {id_factura}")
-                else:
-                    messagebox.showerror("Error", "No se pudo registrar la venta en la base de datos.")
-                    return
-            else:
-                # Registrar venta normal
-                resultado_factura = database.crear_factura_completa(id_cliente, items_carrito)
-                
-                if resultado_factura:
-                    id_factura = resultado_factura['id_factura']
-                    folio_numero = resultado_factura['folio_numero']
-                    
-                    mensaje_exito = (f"Venta registrada exitosamente!\n\n"
-                                   f"Factura ID: {id_factura}\n"
-                                   f"Folio: {folio_numero:06d}")
-                else:
-                    messagebox.showerror("Error", "No se pudo registrar la venta en la base de datos.")
-                    return
-            
-            # Preguntar si también quiere generar PDF
-            generar_pdf = messagebox.askyesno("Generar PDF", 
-                                            f"{mensaje_exito}\n\n"
-                                            f"¿Desea generar también el PDF del recibo?")
-            
-            ruta_pdf = None
-            if generar_pdf:
-                # Generar PDF con el folio asignado
-                if carrito.sectioning_enabled and len(carrito.secciones) > 1:
-                    items_por_seccion = carrito.obtener_items_por_seccion()
-                    secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
-                    
-                    if len(secciones_con_datos) > 1:
-                        ruta_pdf = generador_pdf.crear_recibo_con_secciones(
-                            nombre_cliente, secciones_con_datos, total, folio_numero
-                        )
-                    else:
-                        ruta_pdf = generador_pdf.crear_recibo_simple(
-                            nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
-                        )
-                else:
-                    ruta_pdf = generador_pdf.crear_recibo_simple(
-                        nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
-                    )
-            
-            # Mostrar mensaje final
-            mensaje_final = mensaje_exito
-            if ruta_pdf:
-                mensaje_final += f"\nPDF guardado en: {ruta_pdf}"
-            
-            messagebox.showinfo("Éxito", mensaje_final)
-            
-            # Limpiar carrito y resetear estado
-            carrito.limpiar_carrito()
-            self._resetear_estado_orden(widgets)
-            
-            # Notificar cambio si estamos en contexto de launcher
-            if self.is_launcher_context:
-                self._notificar_cambio_orden()
-            
         except Exception as e:
             messagebox.showerror("Error", f"Error al procesar la venta: {str(e)}")
+            import traceback
+            traceback.print_exc()  # Para debugging
 
-    def _resetear_estado_orden(self, widgets):
-        """Resetea el estado de la orden después de completar una venta"""
-        self.folio_actual = None
-        self.orden_guardada = None
+    def _limpiar_carrito(self, widgets):
+        """Limpia el carrito y restablece el estado de la interfaz"""
+        if not widgets['carrito_obj'].items:
+            return
+            
+        if not messagebox.askyesno("Confirmar Limpieza", 
+                                 "¿Estás seguro de que quieres limpiar el carrito?"):
+            return
+            
+        widgets['carrito_obj'].limpiar_carrito()
+        self._actualizar_total(widgets)
         
-        # Actualizar interfaz
-        widgets['lbl_folio_info'].config(
-            text="Nueva orden",
-            foreground="blue"
-        )
-        
-        self.lbl_orden_info.config(
-            text="Nueva Orden",
-            foreground="blue"
-        )
-        
-        # Actualizar título de ventana y pestaña
-        self.root.title("Disfruleg - Sistema de Ventas con Órdenes Guardadas")
-        tab_actual = self.notebook.select()
-        tab_index = self.notebook.index(tab_actual)
-        self.notebook.tab(tab_actual, text=f"Pedido {tab_index + 1}")
+        # Si estamos editando una orden guardada, resetear el estado
+        if self.folio_actual and self.orden_guardada:
+            self.orden_guardada = False
+            self.folio_actual = None
+            
+            # Actualizar interfaz
+            widgets['lbl_folio_info'].config(
+                text="Nueva orden (cambios no guardados)",
+                foreground="orange"
+            )
+            
+            # Actualizar título de pestaña
+            tab_actual = self.notebook.select()
+            self.notebook.tab(tab_actual, text="Pedido 1")
+            
+            self.lbl_orden_info.config(
+                text="Nueva Orden (cambios no guardados)",
+                foreground="orange"
+            )
+            
+            self.root.title("Disfruleg - Sistema de Ventas con Órdenes Guardadas")
 
     # ==================== MÉTODOS EXISTENTES (SIN CAMBIOS) ====================
 
+    def _on_grupo_selected(self, event, widgets):
+        """Maneja la selección de grupo de cliente"""
+        grupo_seleccionado = widgets['combo_grupos'].get()
+        if grupo_seleccionado:
+            grupo_id = self.grupos_data[grupo_seleccionado]
+            clientes = database.obtener_clientes_por_grupo(grupo_id)
+            
+            nombres_clientes = [nombre for _, nombre in clientes]
+            widgets['combo_clientes']['values'] = nombres_clientes
+            widgets['combo_clientes']['state'] = 'readonly'
+            
+            # Guardar mapping de nombres a IDs
+            widgets['clientes_map'] = {nombre: id_cliente for id_cliente, nombre in clientes}
+        else:
+            widgets['combo_clientes']['state'] = 'disabled'
+            widgets['combo_clientes'].set('')
+
+    def _buscar_insumos(self, widgets):
+        """Busca insumos en la base de datos"""
+        query = widgets['entry_busqueda'].get().strip()
+        
+        grupo_seleccionado = widgets['combo_grupos'].get()
+        if not grupo_seleccionado:
+            messagebox.showwarning("Falta Grupo", "Por favor, selecciona un grupo primero.")
+            return
+            
+        grupo_id = self.grupos_data[grupo_seleccionado]
+        
+        # Si la búsqueda está vacía, mostrar todos los productos
+        if not query:
+            resultados = database.buscar_todos_insumos(grupo_id)
+        else:
+            resultados = database.buscar_insumos(query, grupo_id)
+        
+        # Limpiar resultados anteriores
+        for item in widgets['tree_resultados'].get_children():
+            widgets['tree_resultados'].delete(item)
+            
+        # Mostrar nuevos resultados
+        for insumo in resultados:
+            widgets['tree_resultados'].insert("", "end", values=(
+                insumo['nombre'], 
+                f"${insumo['precio']:.2f}"
+            ), tags=(insumo['id'],))
+
     def _abrir_ventana_cantidad(self, event, widgets):
-        """Abre ventana para especificar cantidad y sección (si aplica)"""
-        seleccion = widgets['tree_resultados'].focus()
-        if not seleccion: 
+        """Abre ventana para seleccionar cantidad del producto"""
+        seleccion = widgets['tree_resultados'].selection()
+        if not seleccion:
             return
-
-        producto_info = widgets['tree_resultados'].item(seleccion, "values")
-        if len(producto_info) < 4:
-            messagebox.showerror("Error", "Información del producto incompleta.")
-            return
-
-        nombre_prod = producto_info[0]
-        precio_str = producto_info[1]
-        es_especial = bool(int(producto_info[2]))
-        unidad_producto = producto_info[3] 
-
-        # Crear ventana de cantidad
-        top = tk.Toplevel(self.root)
-        top.title("Agregar Producto")
-        top.geometry("350x250" if es_especial else "350x200")
-        top.resizable(False, False)
-        top.transient(self.root)
-        top.grab_set()
-
-        # Información del producto
-        ttk.Label(top, text=f"Producto: {nombre_prod}", 
-                 font=("Helvetica", 10, "bold")).pack(pady=5)
-        
-        lbl_precio_actual = ttk.Label(top, text=f"Precio Base: {precio_str}", font=("Helvetica", 10))
-        lbl_precio_actual.pack(pady=2)
-        
-        # Frame para cantidad
-        frame_cantidad = ttk.Frame(top)
-        frame_cantidad.pack(pady=5)
-        
-        ttk.Label(frame_cantidad, text="Cantidad:").pack(side="left", padx=5)
-        entry_cantidad = ttk.Entry(frame_cantidad, width=10)
-        entry_cantidad.pack(side="left", padx=5)
-        entry_cantidad.focus()
-        entry_cantidad.insert(0, "1.0")
-        entry_cantidad.select_range(0, tk.END)
-
-        entry_precio_modificable = None
-        if es_especial:
-            lbl_precio_actual.config(text=f"Precio Actual: {precio_str}")
             
-            frame_precio = ttk.Frame(top)
-            frame_precio.pack(pady=5)
-            
-            ttk.Label(frame_precio, text="Nuevo Precio:").pack(side="left", padx=5)
-            entry_precio_modificable = ttk.Entry(frame_precio, width=10)
-            entry_precio_modificable.pack(side="left", padx=5)
-            entry_precio_modificable.insert(0, precio_str.replace(', '))
-            
-            ttk.Label(top, text="*Producto especial: puedes modificar el precio.", 
-                     font=("Arial", 8), foreground="red").pack(pady=2)
-
-        # Frame para sección (si está habilitado)
-        frame_seccion = ttk.Frame(top)
-        combo_seccion = None
+        item = widgets['tree_resultados'].item(seleccion[0])
+        id_insumo = item['tags'][0]
+        nombre_insumo = item['values'][0]
+        precio = float(item['values'][1].replace('$', ''))
         
-        carrito = widgets['carrito_obj']
-        if carrito.sectioning_enabled and carrito.secciones:
-            frame_seccion.pack(pady=5)
-            ttk.Label(frame_seccion, text="Sección:").pack(side="left", padx=5)
-            
-            secciones_nombres = [s.nombre for s in carrito.secciones.values()]
-            combo_seccion = ttk.Combobox(frame_seccion, values=secciones_nombres, 
-                                       state="readonly", width=15)
-            combo_seccion.pack(side="left", padx=5)
-            if secciones_nombres:
-                combo_seccion.set(secciones_nombres[0])
-
-        # Botones
-        frame_botones = ttk.Frame(top)
-        frame_botones.pack(pady=15)
+        # Obtener información adicional del producto
+        grupo_id = self.grupos_data[widgets['combo_grupos'].get()]
+        productos = database.buscar_insumos(nombre_insumo, grupo_id)
+        unidad_producto = "unidad"  # Valor por defecto
         
-        btn_aceptar = ttk.Button(
-            frame_botones, 
-            text="Agregar", 
-            command=lambda: self._confirmar_agregar_al_carrito(
-                nombre_prod, entry_cantidad.get(), 
-                entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str,
-                unidad_producto, combo_seccion, top, widgets
-            )
+        for producto in productos:
+            if producto['id'] == int(id_insumo):
+                unidad_producto = producto.get('unidad', 'unidad')
+                break
+        
+        # Abrir diálogo de cantidad
+        dialogo = tk.Toplevel(self.root)
+        dialogo.title(f"Cantidad - {nombre_insumo}")
+        dialogo.geometry("300x150")
+        dialogo.resizable(False, False)
+        dialogo.transient(self.root)
+        dialogo.grab_set()
+        
+        ttk.Label(dialogo, text=f"Producto: {nombre_insumo}").pack(pady=10)
+        ttk.Label(dialogo, text=f"Precio unitario: ${precio:.2f}").pack()
+        
+        frame_cantidad = ttk.Frame(dialogo)
+        frame_cantidad.pack(pady=10)
+        
+        ttk.Label(frame_cantidad, text="Cantidad:").pack(side="left")
+        cantidad_var = tk.DoubleVar(value=1.0)
+        spinbox = ttk.Spinbox(frame_cantidad, from_=0.1, to=10000.0, increment=0.1, 
+                             textvariable=cantidad_var, width=10)
+        spinbox.pack(side="left", padx=5)
+        
+        def agregar_al_carrito():
+            cantidad = cantidad_var.get()
+            if cantidad <= 0:
+                messagebox.showwarning("Cantidad Inválida", "La cantidad debe ser mayor a 0.")
+                return
+                
+            # Verificar si hay secciones habilitadas
+            carrito = widgets['carrito_obj']
+            if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                # Abrir diálogo de selección de sección
+                secciones_list = list(carrito.secciones.values())
+                dialogo_seccion = DialogoSeccion(
+                    dialogo, 
+                    secciones_list,
+                    lambda seccion_id: self._agregar_a_seccion(
+                        int(id_insumo), nombre_insumo, cantidad, precio, unidad_producto, seccion_id, widgets
+                    )
+                )
+            else:
+                # Agregar directamente al carrito
+                self._agregar_a_seccion(int(id_insumo), nombre_insumo, cantidad, precio, unidad_producto, None, widgets)
+                
+            dialogo.destroy()
+            
+        ttk.Button(dialogo, text="Agregar", command=agregar_al_carrito).pack(pady=10)
+        
+        # Centrar diálogo
+        dialogo.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dialogo.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dialogo.winfo_height()) // 2
+        dialogo.geometry(f"+{x}+{y}")
+
+    def _agregar_a_seccion(self, id_insumo, nombre_insumo, cantidad, precio, unidad_producto, seccion_id, widgets):
+        """Agrega un producto a la sección especificada del carrito"""
+        widgets['carrito_obj'].agregar_item(
+            id_insumo, nombre_insumo, cantidad, precio, unidad_producto, seccion_id
         )
-        btn_aceptar.pack(side="left", padx=5)
-        
-        ttk.Button(frame_botones, text="Cancelar", command=top.destroy).pack(side="left", padx=5)
-        
-        # Permitir agregar con Enter
-        entry_cantidad.bind("<Return>", 
-                          lambda e: self._confirmar_agregar_al_carrito(
-                              nombre_prod, entry_cantidad.get(), 
-                              entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str,
-                              unidad_producto, combo_seccion, top, widgets
-                          ))
-        if es_especial and entry_precio_modificable:
-            entry_precio_modificable.bind("<Return>", 
-                                        lambda e: self._confirmar_agregar_al_carrito(
-                                            nombre_prod, entry_cantidad.get(), 
-                                            entry_precio_modificable.get() if es_especial and entry_precio_modificable else precio_str,
-                                            unidad_producto, combo_seccion, top, widgets
-                                        ))
-    
-    def _confirmar_agregar_al_carrito(self, nombre_prod, cantidad_str, precio_str_or_modified, unidad_producto, combo_seccion, toplevel, widgets):
-        """Confirma y agrega el producto al carrito"""
-        try:
-            cantidad = float(cantidad_str)
-            if cantidad <= 0: 
-                raise ValueError("La cantidad debe ser positiva.")
-        except ValueError:
-            messagebox.showerror("Cantidad Inválida", 
-                               "Introduce un número válido y positivo.", parent=toplevel)
-            return
-
-        try:
-            precio_unit = float(precio_str_or_modified.replace(', ')) 
-            if precio_unit < 0:
-                raise ValueError("El precio no puede ser negativo.")
-        except ValueError:
-            messagebox.showerror("Precio Inválido", 
-                               "Introduce un precio válido y no negativo.", parent=toplevel)
-            return
-        
-        # Determinar sección si aplica
-        seccion_id = None
-        carrito = widgets['carrito_obj']
-        
-        if carrito.sectioning_enabled and combo_seccion:
-            nombre_seccion = combo_seccion.get()
-            for sid, seccion in carrito.secciones.items():
-                if seccion.nombre == nombre_seccion:
-                    seccion_id = sid
-                    break
-        
-        # Agregar al carrito
-        carrito.agregar_item(nombre_prod, cantidad, precio_unit, unidad_producto, seccion_id)
-        toplevel.destroy()
-
-    def _limpiar_carrito(self, widgets):
-        """Limpia el carrito completo"""
-        widgets['carrito_obj'].limpiar_carrito()
+        self._actualizar_total(widgets)
 
     def _actualizar_total(self, widgets):
-        """Actualiza el total y contador del carrito"""
+        """Actualiza el total y contador de productos"""
         carrito = widgets['carrito_obj']
         total = carrito.obtener_total()
-        count = len(carrito.items)
+        cantidad_total = carrito.obtener_cantidad_total()
         
         widgets['lbl_total_valor'].config(text=f"${total:.2f}")
-        widgets['lbl_contador'].config(text=f"{count} producto{'s' if count != 1 else ''}")
-    
-    def _generar_excel(self, widgets):
-        """Genera un archivo Excel con el contenido del carrito"""
-        nombre_cliente = widgets['combo_clientes'].get()
-        if not nombre_cliente:
-            messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
-            return
-
-        carrito = widgets['carrito_obj']
-        if not carrito.items:
-            messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
-            return
+        widgets['lbl_contador'].config(text=f"{cantidad_total} productos")
         
-        total = carrito.obtener_total()
-        
-        if not messagebox.askyesno("Generar Excel", 
-                                f"¿Generar archivo Excel para '{nombre_cliente}'?\n\n"
-                                f"Total: ${total:.2f}"):
-            return
+        # Actualizar estado de botones según si hay cambios no guardados
+        if self.folio_actual and self.orden_guardada:
+            widgets['lbl_folio_info'].config(
+                text=f"Orden {self.folio_actual:06d} (cambios no guardados)",
+                foreground="orange"
+            )
 
+    def _generar_pdf_venta(self, widgets, venta_id, folio_numero):
+        """Genera PDF de la venta registrada"""
         try:
-            if carrito.sectioning_enabled and len(carrito.secciones) > 1:
-                items_por_seccion = carrito.obtener_items_por_seccion()
-                secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
-                
-                if len(secciones_con_datos) > 1:
-                    ruta_excel = generador_excel.crear_excel_con_secciones(
-                        nombre_cliente, secciones_con_datos, total
-                    )
-                else:
-                    items_carrito = carrito.obtener_items()
-                    ruta_excel = generador_excel.crear_excel_simple(
-                        nombre_cliente, items_carrito
-                    )
-            else:
-                items_carrito = carrito.obtener_items()
-                ruta_excel = generador_excel.crear_excel_simple(
-                    nombre_cliente, items_carrito
-                )
+            nombre_cliente = widgets['combo_clientes'].get()
+            carrito = widgets['carrito_obj']
+            total = carrito.obtener_total()
             
-            if ruta_excel:
-                messagebox.showinfo("Excel Generado", 
-                                f"Archivo Excel generado exitosamente!\n\n"
-                                f"Guardado en: {ruta_excel}")
-            else:
-                messagebox.showerror("Error", "No se pudo generar el archivo Excel.")
-                
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al generar Excel: {str(e)}")
-
-    def _generar_pdf_solo(self, widgets):
-        """Genera solo el PDF sin registrar la venta en la base de datos"""
-        nombre_cliente = widgets['combo_clientes'].get()
-        if not nombre_cliente:
-            messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
-            return
-
-        carrito = widgets['carrito_obj']
-        if not carrito.items:
-            messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
-            return
-        
-        total = carrito.obtener_total()
-        
-        if not messagebox.askyesno("Generar PDF", 
-                                  f"¿Generar PDF para '{nombre_cliente}' sin registrar la venta?\n\n"
-                                  f"Total: ${total:.2f}"):
-            return
-
-        try:
+            # Obtener items del carrito en formato correcto
+            items_carrito = self._convertir_carrito_a_formato_pdf(carrito)
+            
+            # Determinar si usar secciones
             if carrito.sectioning_enabled and len(carrito.secciones) > 1:
                 items_por_seccion = carrito.obtener_items_por_seccion()
-                secciones_con_datos = {k: v for k, v in items_por_seccion.items() if v['items']}
+                # Filtrar secciones vacías
+                items_por_seccion = {k: v for k, v in items_por_seccion.items() if v['items']}
                 
-                if len(secciones_con_datos) > 1:
+                if len(items_por_seccion) > 1:
+                    # Usar formato con secciones
                     ruta_pdf = generador_pdf.crear_recibo_con_secciones(
-                        nombre_cliente, secciones_con_datos, total, folio_numero=None
+                        nombre_cliente, items_por_seccion, total, folio_numero
                     )
                 else:
-                    items_carrito = carrito.obtener_items()
+                    # Una sola sección, usar formato simple
                     ruta_pdf = generador_pdf.crear_recibo_simple(
-                        nombre_cliente, items_carrito, f"${total:.2f}", folio_numero=None
+                        nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
                     )
             else:
-                items_carrito = carrito.obtener_items()
+                # Sin secciones, usar formato simple
                 ruta_pdf = generador_pdf.crear_recibo_simple(
-                    nombre_cliente, items_carrito, f"${total:.2f}", folio_numero=None
+                    nombre_cliente, items_carrito, f"${total:.2f}", folio_numero
                 )
             
             if ruta_pdf:
-                messagebox.showinfo("PDF Generado", 
-                                  f"PDF generado exitosamente!\n\n"
-                                  f"Guardado en: {ruta_pdf}\n\n"
-                                  f"Nota: Esta venta NO ha sido registrada en la base de datos.")
+                messagebox.showinfo("PDF Generado", f"PDF guardado en: {ruta_pdf}")
             else:
-                messagebox.showerror("Error", "No se pudo generar el PDF.")
+                messagebox.showerror("Error", "No se pudo generar el PDF")
                 
         except Exception as e:
             messagebox.showerror("Error", f"Error al generar PDF: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
-    def _on_grupo_selected(self, event, widgets):
-        """Maneja la selección de grupo"""
-        widgets['combo_clientes'].set('')
-        widgets['combo_clientes']['values'] = []
-        
-        # Limpiar resultados
-        for item in widgets['tree_resultados'].get_children(): 
-            widgets['tree_resultados'].delete(item)
-        
-        nombre_grupo = widgets['combo_grupos'].get()
-        id_grupo = self.grupos_data.get(nombre_grupo)
-        
-        if id_grupo:
-            clientes = database.obtener_clientes_por_grupo(id_grupo)
-            widgets['clientes_map'] = {nombre: c_id for c_id, nombre in clientes}
-            widgets['combo_clientes']['values'] = list(widgets['clientes_map'].keys())
-            widgets['combo_clientes'].config(state="readonly")
-        else:
-            widgets['combo_clientes'].config(state="disabled")
+    def _generar_pdf_solo(self, widgets):
+        """Genera PDF sin registrar venta"""
+        try:
+            nombre_cliente = widgets['combo_clientes'].get()
+            if not nombre_cliente:
+                messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
+                return
 
-    def _buscar_insumos(self, widgets):
-        """Busca productos en la base de datos"""
-        nombre_grupo = widgets['combo_grupos'].get()
-        if not nombre_grupo:
-            messagebox.showwarning("Falta Grupo", "Por favor, selecciona un grupo.")
-            return
+            carrito = widgets['carrito_obj']
+            if not carrito.items:
+                messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
+                return
             
-        id_grupo = self.grupos_data[nombre_grupo]
-        texto_busqueda = widgets['entry_busqueda'].get()
-        
-        # Limpiar resultados anteriores
-        for item in widgets['tree_resultados'].get_children(): 
-            widgets['tree_resultados'].delete(item)
-        
-        productos = database.buscar_productos_por_grupo_con_especial(id_grupo, texto_busqueda)
-        
-        if productos:
-            for nombre, precio, es_especial, unidad in productos:
-                widgets['tree_resultados'].insert("", "end", values=(nombre, f"${precio:.2f}", es_especial, unidad))
-        else:
-            widgets['tree_resultados'].insert("", "end", values=("No se encontraron productos", "", "", ""))
+            total = carrito.obtener_total()
+            
+            # Usar folio de orden si existe, sino None (será un borrador)
+            folio = self.folio_actual
+            
+            # Obtener items del carrito en formato correcto
+            items_carrito = self._convertir_carrito_a_formato_pdf(carrito)
+            
+            # Determinar si usar secciones
+            if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                items_por_seccion = carrito.obtener_items_por_seccion()
+                # Filtrar secciones vacías
+                items_por_seccion = {k: v for k, v in items_por_seccion.items() if v['items']}
+                
+                if len(items_por_seccion) > 1:
+                    # Usar formato con secciones
+                    ruta_pdf = generador_pdf.crear_recibo_con_secciones(
+                        nombre_cliente, items_por_seccion, total, folio
+                    )
+                else:
+                    # Una sola sección, usar formato simple
+                    ruta_pdf = generador_pdf.crear_recibo_simple(
+                        nombre_cliente, items_carrito, f"${total:.2f}", folio
+                    )
+            else:
+                # Sin secciones, usar formato simple
+                ruta_pdf = generador_pdf.crear_recibo_simple(
+                    nombre_cliente, items_carrito, f"${total:.2f}", folio
+                )
+            
+            if ruta_pdf:
+                messagebox.showinfo("PDF Generado", f"PDF guardado en: {ruta_pdf}")
+            else:
+                messagebox.showerror("Error", "No se pudo generar el PDF")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al generar PDF: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _generar_excel(self, widgets):
+        """Genera archivo Excel del carrito actual"""
+        try:
+            nombre_cliente = widgets['combo_clientes'].get()
+            if not nombre_cliente:
+                messagebox.showwarning("Falta Cliente", "Por favor, selecciona un cliente.")
+                return
+
+            carrito = widgets['carrito_obj']
+            if not carrito.items:
+                messagebox.showwarning("Carrito Vacío", "No hay productos en el carrito.")
+                return
+            
+            total = carrito.obtener_total()
+            
+            # Obtener items del carrito en formato correcto
+            items_carrito = self._convertir_carrito_a_formato_excel(carrito)
+            
+            # Determinar si usar secciones
+            if carrito.sectioning_enabled and len(carrito.secciones) > 1:
+                items_por_seccion = carrito.obtener_items_por_seccion()
+                # Filtrar secciones vacías y convertir formato
+                items_por_seccion_convertidas = {}
+                for nombre_seccion, datos in items_por_seccion.items():
+                    if datos['items']:
+                        items_convertidos = self._convertir_items_seccion_excel(datos['items'])
+                        items_por_seccion_convertidas[nombre_seccion] = {
+                            'items': items_convertidos,
+                            'subtotal': datos['subtotal']
+                        }
+                
+                if len(items_por_seccion_convertidas) > 1:
+                    # Usar formato con secciones
+                    ruta_excel = generador_excel.crear_excel_con_secciones(
+                        nombre_cliente, items_por_seccion_convertidas, total
+                    )
+                else:
+                    # Una sola sección, usar formato simple
+                    ruta_excel = generador_excel.crear_excel_simple(nombre_cliente, items_carrito)
+            else:
+                # Sin secciones, usar formato simple
+                ruta_excel = generador_excel.crear_excel_simple(nombre_cliente, items_carrito)
+            
+            if ruta_excel:
+                messagebox.showinfo("Excel Generado", f"Excel guardado en: {ruta_excel}")
+            else:
+                messagebox.showerror("Error", "No se pudo generar el Excel")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al generar Excel: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def _convertir_carrito_a_formato_pdf(self, carrito):
+        """Convierte items del carrito al formato esperado por generador_pdf"""
+        items_convertidos = []
+        for item_key, item in carrito.items.items():
+            # Formato: ['cantidad', 'producto', 'precio_unit', 'subtotal']
+            items_convertidos.append([
+                f"{item.cantidad:.2f}",
+                item.nombre_producto,
+                f"${item.precio_unitario:.2f}",
+                f"${item.subtotal:.2f}"
+            ])
+        return items_convertidos
+    
+    def _convertir_carrito_a_formato_excel(self, carrito):
+        """Convierte items del carrito al formato esperado por generador_excel"""
+        items_convertidos = []
+        for item_key, item in carrito.items.items():
+            # Formato: ['cantidad', 'producto', 'precio_unit', 'subtotal', 'unidad']
+            items_convertidos.append([
+                f"{item.cantidad:.2f}",
+                item.nombre_producto,
+                f"${item.precio_unitario:.2f}",
+                f"${item.subtotal:.2f}",
+                item.unidad_producto
+            ])
+        return items_convertidos
+    
+    def _convertir_items_seccion_excel(self, items_lista):
+        """Convierte items de una sección al formato correcto para Excel"""
+        # Los items ya están en formato correcto desde obtener_items_por_seccion()
+        return items_lista
 
     def run(self):
-        """Run the application main loop"""
-        if self.root:
+        """Inicia la aplicación"""
+        if not self.is_launcher_context:
             self.root.mainloop()
+        else:
+            # En contexto de launcher, ya está corriendo el mainloop del padre
+            pass
 
-if __name__ == "__main__":
+def main():
+    """Función principal para ejecutar la aplicación de forma independiente"""
     app = ReciboAppMejorado()
     app.run()
+
+if __name__ == "__main__":
+    main()
