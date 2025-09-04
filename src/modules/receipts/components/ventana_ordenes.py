@@ -151,7 +151,8 @@ class VentanaOrdenes:
         # Botón Actualizar
         btn_actualizar = ttk.Button(actions_frame, 
                                    text="🔄 Actualizar",
-                                   command=self._actualizar_listas)
+                                   #command=self._actualizar_listas)
+                                   command=lambda: self._forzar_actualizacion_manual())
         btn_actualizar.pack(side="right", padx=(5, 0))
     
     def _crear_notebook(self, parent):
@@ -442,7 +443,7 @@ class VentanaOrdenes:
             for orden in ordenes:
                 folio_str = f"{orden['folio_numero']:06d}"
                 cliente = orden['nombre_cliente']
-                total = f"${orden['total_estimado']:.2f}"
+                total = f"${orden['total_estimado']:,.2f}"
                 
                 # Formatear fecha correctamente (sin tiempo si es solo fecha)
                 fecha_mod = orden.get('fecha_modificacion_str', 'N/A')
@@ -476,7 +477,7 @@ class VentanaOrdenes:
             for orden in historial:
                 folio_str = f"{orden['folio_numero']:06d}"
                 cliente = orden['nombre_cliente']
-                total = f"${orden['total_estimado']:.2f}"
+                total = f"${orden['total_estimado']:,.2f}"
                 
                 # Formatear fecha correctamente (sin tiempo si es solo fecha)
                 fecha_reg = orden.get('fecha_creacion_str', 'N/A')
@@ -504,6 +505,27 @@ class VentanaOrdenes:
         ahora = datetime.now().strftime("%H:%M:%S")
         self.lbl_ultima_actualizacion.config(text=f"Actualizado: {ahora}")
     
+    def _forzar_actualizacion_manual(self):
+        """Fuerza actualización manual cuando se presiona el botón"""
+        try:
+            print("🔄 Actualizando listas manualmente...")
+            # Cargar datos frescos
+            self._cargar_ordenes_activas()
+            self._cargar_historial()
+            
+            # Actualizar timestamp
+            from datetime import datetime
+            ahora = datetime.now().strftime("%H:%M:%S")
+            self.lbl_ultima_actualizacion.config(text=f"Actualizado: {ahora}")
+            
+            # Mensaje visual opcional
+            self.lbl_ultima_actualizacion.config(foreground="green")
+            self.root.after(2000, lambda: self.lbl_ultima_actualizacion.config(foreground="black"))
+            
+        except Exception as e:
+            print(f"Error en actualización manual: {e}")
+            messagebox.showerror("Error", f"Error al actualizar: {str(e)}")
+            
     def forzar_actualizacion(self):
         """Fuerza la actualización de las listas desde el exterior"""
         try:

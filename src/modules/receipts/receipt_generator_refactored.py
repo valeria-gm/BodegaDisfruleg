@@ -457,63 +457,58 @@ class ReciboAppMejorado:
             id_cliente = widgets['clientes_map'][nombre_cliente]
             total = carrito.obtener_total()
 
-            # Si no tiene folio, obtener uno nuevo con reintentos
-            if not self.folio_actual:
-                max_reintentos = 5
-                for intento in range(max_reintentos):
-                    folio_sugerido = self.orden_manager.obtener_siguiente_folio_disponible()
-                    if not folio_sugerido:
+            # SIEMPRE obtener un nuevo folio único al guardar (independientemente si ya tiene uno)
+            folio_a_usar = None
+            
+            # Si es una orden completamente nueva (sin folio previo)
+            if not self.folio_actual or not self.orden_guardada:
+                # Obtener nuevo folio con múltiples intentos para evitar duplicados
+                max_intentos_folio = 10
+                for intento in range(max_intentos_folio):
+                    folio_candidato = self.orden_manager.obtener_siguiente_folio_disponible()
+                    if not folio_candidato:
                         messagebox.showerror("Error", "No se pudo obtener un folio disponible.")
                         return
                     
-                    # Verificar que el folio esté realmente disponible
-                    if self.orden_manager._verificar_folio_disponible(folio_sugerido):
-                        self.folio_actual = folio_sugerido
+                    # Verificar disponibilidad inmediatamente antes de usar
+                    if self.orden_manager._verificar_folio_disponible(folio_candidato):
+                        folio_a_usar = folio_candidato
+                        print(f"✓ Folio {folio_a_usar} obtenido y verificado como disponible")
                         break
                     else:
-                        print(f"Folio {folio_sugerido} ya no está disponible, reintentando... ({intento + 1}/{max_reintentos})")
-                        if intento == max_reintentos - 1:
-                            messagebox.showerror("Error", 
-                                               f"No se pudo obtener un folio disponible después de {max_reintentos} intentos. "
-                                               f"Por favor, inténtelo de nuevo.")
-                            return
+                        print(f"⚠ Folio {folio_candidato} ya no disponible, reintentando... ({intento + 1}/{max_intentos_folio})")
+                        
+                if not folio_a_usar:
+                    messagebox.showerror("Error", "No se pudo obtener un folio único después de múltiples intentos.")
+                    return
+                    
+            else:
+                # Es una actualización de orden existente
+                folio_a_usar = self.folio_actual
 
             # Serializar estado del carrito
             datos_carrito = self._serializar_estado_carrito(widgets)
 
             # Guardar en base de datos
-            if self.orden_guardada:
+            if self.orden_guardada and self.folio_actual == folio_a_usar:
                 # Actualizar orden existente
-                exito = self.orden_manager.actualizar_orden(self.folio_actual, datos_carrito, total)
+                exito = self.orden_manager.actualizar_orden(folio_a_usar, datos_carrito, total)
                 mensaje_exito = "Orden actualizada exitosamente"
             else:
-                # Crear nueva orden con manejo de race conditions
-                exito = False
-                max_reintentos_reserva = 3
-                
-                for intento_reserva in range(max_reintentos_reserva):
-                    exito = self.orden_manager.reservar_folio(
-                        self.folio_actual, id_cliente, self.username, datos_carrito, total
-                    )
+                # Crear nueva orden con validación adicional
+                # Doble verificación antes de reservar
+                if not self.orden_manager._verificar_folio_disponible(folio_a_usar):
+                    messagebox.showerror("Error", f"El folio {folio_a_usar} ya no está disponible. Intente nuevamente.")
+                    return
                     
-                    if exito:
-                        mensaje_exito = "Orden guardada exitosamente"
-                        break
-                    else:
-                        print(f"Fallo al reservar folio {self.folio_actual}, intento {intento_reserva + 1}/{max_reintentos_reserva}")
-                        
-                        # Si no es el último intento, obtener un nuevo folio
-                        if intento_reserva < max_reintentos_reserva - 1:
-                            nuevo_folio = self.orden_manager.obtener_siguiente_folio_disponible()
-                            if nuevo_folio and nuevo_folio != self.folio_actual:
-                                self.folio_actual = nuevo_folio
-                                print(f"Intentando con nuevo folio: {self.folio_actual}")
-                            else:
-                                print("No se pudo obtener un folio alternativo")
-                                break
+                exito = self.orden_manager.reservar_folio(
+                    folio_a_usar, id_cliente, self.username, datos_carrito, total
+                )
+                mensaje_exito = "Orden guardada exitosamente"
 
             if exito:
-                # Marcar como orden guardada
+                # Actualizar estado interno SOLO si fue exitoso
+                self.folio_actual = folio_a_usar
                 self.orden_guardada = True
                 
                 # Actualizar interfaz
@@ -534,16 +529,16 @@ class ReciboAppMejorado:
                 )
 
                 messagebox.showinfo("Éxito", 
-                                  f"{mensaje_exito}\n\n"
-                                  f"Folio asignado: {self.folio_actual:06d}\n"
-                                  f"Cliente: {nombre_cliente}\n"
-                                  f"Total: ${total:.2f}")
+                                f"{mensaje_exito}\n\n"
+                                f"Folio asignado: {self.folio_actual:06d}\n"
+                                f"Cliente: {nombre_cliente}\n"
+                                f"Total: ${total:,.2f}")
                 
                 # Notificar al padre sobre el cambio si estamos en contexto de launcher
                 if self.is_launcher_context:
                     self._notificar_cambio_orden()
             else:
-                messagebox.showerror("Error", "No se pudo guardar la orden.")
+                messagebox.showerror("Error", f"No se pudo guardar la orden con folio {folio_a_usar}.")
 
         except Exception as e:
             messagebox.showerror("Error", f"Error al guardar orden: {str(e)}")
@@ -898,36 +893,76 @@ class ReciboAppMejorado:
         grupo_id = self.grupos_data[widgets['combo_grupos'].get()]
         productos = database.buscar_insumos(nombre_insumo, grupo_id)
         unidad_producto = "unidad"  # Valor por defecto
+        es_especial = False
         
         for producto in productos:
             if producto['id'] == int(id_insumo):
                 unidad_producto = producto.get('unidad', 'unidad')
+                es_especial = producto.get('es_especial', False)
                 break
         
         # Abrir diálogo de cantidad
         dialogo = tk.Toplevel(self.root)
         dialogo.title(f"Cantidad - {nombre_insumo}")
-        dialogo.geometry("300x150")
+        
+        # Ajustar tamaño según si es especial o no
+        if es_especial:
+            dialogo.geometry("400x280")
+        else:
+            dialogo.geometry("350x200")
+        
         dialogo.resizable(False, False)
         dialogo.transient(self.root)
         dialogo.grab_set()
         
+        # Información del producto
         ttk.Label(dialogo, text=f"Producto: {nombre_insumo}").pack(pady=10)
-        ttk.Label(dialogo, text=f"Precio unitario: ${precio:.2f}").pack()
         
+        # Mostrar si es producto especial
+        if es_especial:
+            ttk.Label(dialogo, text="⭐ PRODUCTO ESPECIAL", 
+                    font=("Arial", 10, "bold"), 
+                    foreground="orange").pack()
+        
+        ttk.Label(dialogo, text=f"Precio base: ${precio:.2f}").pack()
+        
+        # Frame para cantidad
         frame_cantidad = ttk.Frame(dialogo)
         frame_cantidad.pack(pady=10)
         
         ttk.Label(frame_cantidad, text="Cantidad:").pack(side="left")
         cantidad_var = tk.DoubleVar(value=1.0)
         spinbox = ttk.Spinbox(frame_cantidad, from_=0.1, to=10000.0, increment=0.1, 
-                             textvariable=cantidad_var, width=10)
+                            textvariable=cantidad_var, width=10)
         spinbox.pack(side="left", padx=5)
+        
+        # Frame para precio (solo si es especial)
+        precio_var = tk.DoubleVar(value=precio)
+        
+        if es_especial:
+            frame_precio = ttk.Frame(dialogo)
+            frame_precio.pack(pady=10)
+            
+            ttk.Label(frame_precio, text="Precio personalizado:").pack(side="left")
+            entry_precio = ttk.Entry(frame_precio, textvariable=precio_var, width=10)
+            entry_precio.pack(side="left", padx=5)
+            ttk.Label(frame_precio, text="$").pack(side="left")
+            
+            # Nota explicativa
+            ttk.Label(dialogo, text="💡 Puede modificar el precio para este producto especial",
+                    font=("Arial", 8), foreground="gray").pack(pady=(5, 0))
         
         def agregar_al_carrito():
             cantidad = cantidad_var.get()
             if cantidad <= 0:
                 messagebox.showwarning("Cantidad Inválida", "La cantidad debe ser mayor a 0.")
+                return
+            
+            # Obtener precio final (personalizado si es especial, original si no)
+            precio_final = precio_var.get() if es_especial else precio
+            
+            if es_especial and precio_final <= 0:
+                messagebox.showwarning("Precio Inválido", "El precio debe ser mayor a 0.")
                 return
                 
             # Verificar si hay secciones habilitadas
@@ -938,23 +973,34 @@ class ReciboAppMejorado:
                 dialogo_seccion = DialogoSeccion(
                     dialogo, 
                     secciones_list,
-                    lambda seccion_id: self._agregar_a_seccion(
-                        int(id_insumo), nombre_insumo, cantidad, precio, unidad_producto, seccion_id, widgets
+                    lambda seccion_id: self._agregar_a_seccion_y_cerrar(
+                        int(id_insumo), nombre_insumo, cantidad, precio_final, unidad_producto, seccion_id, widgets, dialogo
                     )
                 )
             else:
                 # Agregar directamente al carrito
-                self._agregar_a_seccion(int(id_insumo), nombre_insumo, cantidad, precio, unidad_producto, None, widgets)
-                
-            dialogo.destroy()
-            
-        ttk.Button(dialogo, text="Agregar", command=agregar_al_carrito).pack(pady=10)
+                self._agregar_a_seccion(int(id_insumo), nombre_insumo, cantidad, precio_final, unidad_producto, None, widgets)
+                dialogo.destroy()
+        
+        # Botón Agregar - SIEMPRE visible
+        frame_botones = ttk.Frame(dialogo)
+        frame_botones.pack(pady=15)
+        
+        btn_agregar = ttk.Button(frame_botones, text="Agregar", command=agregar_al_carrito)
+        btn_agregar.pack(side="left", padx=5)
+        
+        btn_cancelar = ttk.Button(frame_botones, text="Cancelar", command=dialogo.destroy)
+        btn_cancelar.pack(side="left", padx=5)
         
         # Centrar diálogo
         dialogo.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width() - dialogo.winfo_width()) // 2
         y = self.root.winfo_y() + (self.root.winfo_height() - dialogo.winfo_height()) // 2
         dialogo.geometry(f"+{x}+{y}")
+        
+        # Hacer focus en cantidad para fácil edición
+        spinbox.focus_set()
+        spinbox.selection_range(0, 'end')
 
     def _agregar_a_seccion(self, id_insumo, nombre_insumo, cantidad, precio, unidad_producto, seccion_id, widgets):
         """Agrega un producto a la sección especificada del carrito"""
@@ -962,6 +1008,11 @@ class ReciboAppMejorado:
             id_insumo, nombre_insumo, cantidad, precio, unidad_producto, seccion_id
         )
         self._actualizar_total(widgets)
+
+    def _agregar_a_seccion_y_cerrar(self, id_insumo, nombre_insumo, cantidad, precio, unidad_producto, seccion_id, widgets, dialogo_principal):
+        """Agrega un producto a la sección especificada y cierra el diálogo principal"""
+        self._agregar_a_seccion(id_insumo, nombre_insumo, cantidad, precio, unidad_producto, seccion_id, widgets)
+        dialogo_principal.destroy()
 
     def _actualizar_total(self, widgets):
         """Actualiza el total y contador de productos"""
