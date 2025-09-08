@@ -150,9 +150,8 @@ class VentanaOrdenes:
         
         # Botón Actualizar
         btn_actualizar = ttk.Button(actions_frame, 
-                                   text="🔄 Actualizar",
-                                   #command=self._actualizar_listas)
-                                   command=lambda: self._forzar_actualizacion_manual())
+                           text="🔄 Actualizar",
+                           command=self._forzar_actualizacion_manual)
         btn_actualizar.pack(side="right", padx=(5, 0))
     
     def _crear_notebook(self, parent):
@@ -350,43 +349,71 @@ class VentanaOrdenes:
     def _on_filtro_changed(self, *args):
         """Maneja cambios en el filtro de búsqueda"""
         # Auto-filtrar después de un breve delay
-        self.root.after_cancel(getattr(self, '_filter_job', None))
+        if hasattr(self, '_filter_job') and self._filter_job is not None:
+            self.root.after_cancel(self._filter_job)
         self._filter_job = self.root.after(300, self._aplicar_filtro)
-    
+        
     def _buscar_por_folio(self):
         """Busca una orden específica por folio"""
         texto_busqueda = self.filtro_busqueda.get().strip()
         if not texto_busqueda:
-            self._aplicar_filtro()
+            self._limpiar_busqueda()
             return
         
         try:
-            folio = int(texto_busqueda)
-            # Buscar en órdenes activas
-            for item in self.tree_activas.get_children():
-                valores = self.tree_activas.item(item, "values")
-                if valores and int(valores[0]) == folio:
-                    self.notebook.select(0)  # Cambiar a pestaña activas
-                    self.tree_activas.selection_set(item)
-                    self.tree_activas.focus(item)
-                    self.tree_activas.see(item)
-                    return
-            
-            # Buscar en historial
-            for item in self.tree_historial.get_children():
-                valores = self.tree_historial.item(item, "values")
-                if valores and int(valores[0]) == folio:
-                    self.notebook.select(1)  # Cambiar a pestaña historial
-                    self.tree_historial.selection_set(item)
-                    self.tree_historial.focus(item)
-                    self.tree_historial.see(item)
-                    return
-            
-            messagebox.showinfo("No Encontrado", f"No se encontró orden con folio {folio:06d}")
+            # Si es un número, buscar por folio exacto
+            if texto_busqueda.isdigit():
+                folio_buscado = int(texto_busqueda)
+                
+                # Buscar en órdenes activas
+                encontrado = False
+                for item in self.tree_activas.get_children():
+                    valores = self.tree_activas.item(item, "values")
+                    if valores:
+                        folio_item = int(valores[0].replace(',', ''))  # Remover comas si las hay
+                        if folio_item == folio_buscado:
+                            self.notebook.select(0)  # Cambiar a pestaña activas
+                            self.tree_activas.selection_set(item)
+                            self.tree_activas.focus(item)
+                            self.tree_activas.see(item)
+                            # Highlight el item encontrado
+                            self.tree_activas.item(item, tags=("found",))
+                            self.tree_activas.tag_configure("found", background="yellow")
+                            # Remover highlight después de 3 segundos
+                            self.root.after(3000, lambda: self.tree_activas.item(item, tags=()))
+                            encontrado = True
+                            break
+                
+                if not encontrado:
+                    # Buscar en historial
+                    for item in self.tree_historial.get_children():
+                        valores = self.tree_historial.item(item, "values")
+                        if valores:
+                            folio_item = int(valores[0].replace(',', ''))  # Remover comas si las hay
+                            if folio_item == folio_buscado:
+                                self.notebook.select(1)  # Cambiar a pestaña historial
+                                self.tree_historial.selection_set(item)
+                                self.tree_historial.focus(item)
+                                self.tree_historial.see(item)
+                                # Highlight el item encontrado
+                                self.tree_historial.item(item, tags=("found",))
+                                self.tree_historial.tag_configure("found", background="yellow")
+                                # Remover highlight después de 3 segundos
+                                self.root.after(3000, lambda: self.tree_historial.item(item, tags=()))
+                                encontrado = True
+                                break
+                
+                if not encontrado:
+                    messagebox.showinfo("No Encontrado", 
+                                    f"No se encontró orden con folio {folio_buscado:06d}")
+            else:
+                # Si no es número, aplicar filtro de texto general
+                self._aplicar_filtro()
             
         except ValueError:
-            messagebox.showwarning("Folio Inválido", "Por favor ingrese un número de folio válido")
-    
+            messagebox.showwarning("Búsqueda Inválida", 
+                                "Para buscar por folio, ingrese solo números")
+        
     def _limpiar_busqueda(self):
         """Limpia el filtro de búsqueda"""
         self.filtro_busqueda.set("")
@@ -509,9 +536,19 @@ class VentanaOrdenes:
         """Fuerza actualización manual cuando se presiona el botón"""
         try:
             print("🔄 Actualizando listas manualmente...")
+            
+            # Limpiar filtros temporalmente para mostrar todos los datos
+            filtro_actual = self.filtro_busqueda.get()
+            self.filtro_busqueda.set("")
+            
             # Cargar datos frescos
             self._cargar_ordenes_activas()
             self._cargar_historial()
+            
+            # Restaurar filtro si había uno
+            if filtro_actual:
+                self.filtro_busqueda.set(filtro_actual)
+                self._aplicar_filtro()
             
             # Actualizar timestamp
             from datetime import datetime
@@ -522,8 +559,12 @@ class VentanaOrdenes:
             self.lbl_ultima_actualizacion.config(foreground="green")
             self.root.after(2000, lambda: self.lbl_ultima_actualizacion.config(foreground="black"))
             
+            print("✅ Actualización completada exitosamente")
+            
         except Exception as e:
-            print(f"Error en actualización manual: {e}")
+            print(f"❌ Error en actualización manual: {e}")
+            import traceback
+            traceback.print_exc()
             messagebox.showerror("Error", f"Error al actualizar: {str(e)}")
             
     def forzar_actualizacion(self):

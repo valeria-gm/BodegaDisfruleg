@@ -30,6 +30,7 @@ class ReciboAppMejorado:
         
         # Atributos para órdenes guardadas
         self.folio_actual = orden_folio
+        self.folios_pestanas = {}  # Diccionario para tracking de folios por pestaña
         self.orden_guardada = None
         self.orden_manager = obtener_manager()
         
@@ -258,7 +259,15 @@ class ReciboAppMejorado:
         # Guardar referencia a los widgets de esta pestaña
         tab_id = nueva_pestaña.winfo_name()
         setattr(self, f'widgets_{tab_id}', widgets)
-        
+
+        # Asignar folio único a esta pestaña
+        if self.folio_actual and self.contador_pestañas == 1:
+            # Primera pestaña con folio existente
+            self.folios_pestanas[tab_id] = self.folio_actual
+        else:
+            # Nueva pestaña sin folio asignado
+            self.folios_pestanas[tab_id] = None
+
         self.notebook.select(nueva_pestaña)
         return widgets
 
@@ -327,6 +336,43 @@ class ReciboAppMejorado:
         )
         widgets['tree_resultados'].configure(yscrollcommand=scrollbar_resultados.set)
         scrollbar_resultados.grid(row=0, column=1, sticky="ns")
+
+        # Frame fecha
+        frame_fecha = ttk.LabelFrame(tab_frame, text="Fecha de Registro", padding="10")
+        frame_fecha.pack(fill="x", pady=(5, 0))
+        frame_fecha.columnconfigure(1, weight=1)
+
+        ttk.Label(frame_fecha, text="Fecha:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        widgets['fecha_var'] = tk.StringVar()
+        # Establecer fecha actual como default
+        from datetime import date
+        widgets['fecha_var'].set(date.today().strftime("%Y-%m-%d"))
+
+        widgets['entry_fecha'] = ttk.Entry(frame_fecha, textvariable=widgets['fecha_var'], width=12)
+        widgets['entry_fecha'].grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        ttk.Label(frame_fecha, text="(YYYY-MM-DD)", font=("Arial", 8), foreground="gray").grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+        # Función de validación para fechas
+        def validar_fecha(event, fecha_var=widgets['fecha_var']):
+            try:
+                from datetime import datetime, date
+                fecha_str = fecha_var.get()
+                if fecha_str:
+                    fecha_ingresada = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+                    if fecha_ingresada > date.today():
+                        messagebox.showwarning("Fecha Inválida", 
+                                            "No se pueden usar fechas futuras.\n"
+                                            "Se establecerá la fecha de hoy.")
+                        fecha_var.set(date.today().strftime("%Y-%m-%d"))
+            except ValueError:
+                messagebox.showwarning("Formato Inválido", 
+                                    "Use el formato YYYY-MM-DD")
+                fecha_var.set(date.today().strftime("%Y-%m-%d"))
+
+        # Vincular validación al entry de fecha
+        widgets['entry_fecha'].bind('<FocusOut>', validar_fecha)
+        widgets['entry_fecha'].bind('<Return>', validar_fecha)
 
         # **CARRITO CON SECCIONES**
         frame_carrito = ttk.LabelFrame(frame_central, text="Carrito de Compras", padding="5")
@@ -457,11 +503,16 @@ class ReciboAppMejorado:
             id_cliente = widgets['clientes_map'][nombre_cliente]
             total = carrito.obtener_total()
 
+            # Obtener tab actual y su folio
+            tab_actual = self.notebook.select()
+            tab_id = tab_actual.split(".")[-1]
+            folio_actual_pestana = self.folios_pestanas.get(tab_id)
+
             # SIEMPRE obtener un nuevo folio único al guardar (independientemente si ya tiene uno)
             folio_a_usar = None
             
             # Si es una orden completamente nueva (sin folio previo)
-            if not self.folio_actual or not self.orden_guardada:
+            if not folio_actual_pestana:
                 # Obtener nuevo folio con múltiples intentos para evitar duplicados
                 max_intentos_folio = 10
                 for intento in range(max_intentos_folio):
@@ -484,7 +535,7 @@ class ReciboAppMejorado:
                     
             else:
                 # Es una actualización de orden existente
-                folio_a_usar = self.folio_actual
+                folio_a_usar = folio_actual_pestana
 
             # Serializar estado del carrito
             datos_carrito = self._serializar_estado_carrito(widgets)
@@ -508,7 +559,8 @@ class ReciboAppMejorado:
 
             if exito:
                 # Actualizar estado interno SOLO si fue exitoso
-                self.folio_actual = folio_a_usar
+                self.folios_pestanas[tab_id] = folio_a_usar
+                self.folio_actual = folio_a_usar  # Mantener para compatibilidad
                 self.orden_guardada = True
                 
                 # Actualizar interfaz
@@ -622,6 +674,11 @@ class ReciboAppMejorado:
 
             # Actualizar total
             self._actualizar_total(widgets)
+
+            # Actualizar folio de la pestaña actual
+            tab_actual = self.notebook.select()
+            tab_id = tab_actual.split(".")[-1] 
+            self.folios_pestanas[tab_id] = folio
 
             print(f"Orden {folio} cargada exitosamente")
             return True
@@ -755,9 +812,18 @@ class ReciboAppMejorado:
                     item.subtotal
                 ])
             
-            # Registrar venta en BD
-            resultado_venta = database.crear_factura_completa(id_cliente, items_para_bd)
-            
+            # Obtener fecha seleccionada de la pestaña
+            fecha_str = widgets['fecha_var'].get()
+            try:
+                from datetime import datetime
+                fecha_venta = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            except ValueError:
+                messagebox.showerror("Fecha Inválida", "Por favor use el formato YYYY-MM-DD")
+                return
+
+            # Registrar venta en BD con fecha específica
+            resultado_venta = database.crear_factura_completa(id_cliente, items_para_bd, fecha_venta)
+
             if resultado_venta and resultado_venta['id_factura']:
                 venta_id = resultado_venta['id_factura']
                 folio_factura = resultado_venta['folio_numero']
@@ -810,9 +876,16 @@ class ReciboAppMejorado:
         self._actualizar_total(widgets)
         
         # Si estamos editando una orden guardada, resetear el estado
-        if self.folio_actual and self.orden_guardada:
+        tab_actual = self.notebook.select()
+        tab_id = tab_actual.split(".")[-1]
+        folio_actual_pestana = self.folios_pestanas.get(tab_id)
+
+        if folio_actual_pestana and self.orden_guardada:
             self.orden_guardada = False
-            self.folio_actual = None
+            self.folios_pestanas[tab_id] = None
+            # Solo resetear folio_actual si es la misma pestaña
+            if self.folio_actual == folio_actual_pestana:
+                self.folio_actual = None
             
             # Actualizar interfaz
             widgets['lbl_folio_info'].config(
