@@ -352,9 +352,14 @@ class VentanaOrdenes:
         
     def _buscar_por_folio(self):
         """Busca una orden específica por folio"""
-        texto_busqueda = self.filtro_busqueda.get().strip()
+        print("🔍 DEBUG: _buscar_por_folio iniciado")
+        texto_busqueda = self.entry_busqueda.get().strip()
+        print(f"🔍 DEBUG: texto_busqueda (Entry.get()) = '{texto_busqueda}'")
+        
         if not texto_busqueda:
-            self._limpiar_busqueda()
+            print("🔍 DEBUG: texto_busqueda vacío, limpiando filtros")
+            self.filtro_busqueda.set("")
+            self._aplicar_filtro()
             return
         
         try:
@@ -362,44 +367,17 @@ class VentanaOrdenes:
             if texto_busqueda.isdigit():
                 folio_buscado = int(texto_busqueda)
                 
-                # Buscar en órdenes activas
-                encontrado = False
-                for item in self.tree_activas.get_children():
-                    valores = self.tree_activas.item(item, "values")
-                    if valores:
-                        folio_item = int(valores[0].replace(',', ''))  # Remover comas si las hay
-                        if folio_item == folio_buscado:
-                            self.notebook.select(0)  # Cambiar a pestaña activas
-                            self.tree_activas.selection_set(item)
-                            self.tree_activas.focus(item)
-                            self.tree_activas.see(item)
-                            # Highlight el item encontrado
-                            self.tree_activas.item(item, tags=("found",))
-                            self.tree_activas.tag_configure("found", background="yellow")
-                            # Remover highlight después de 3 segundos
-                            self.root.after(3000, lambda: self.tree_activas.item(item, tags=()))
-                            encontrado = True
-                            break
+                # Limpiar selecciones previas y highlights
+                self._limpiar_highlights()
                 
+                # Buscar en órdenes activas primero
+                encontrado = self._buscar_en_tree(self.tree_activas, folio_buscado, 0, "Órdenes Activas")
+                
+                # Si no se encuentra en activas, buscar en historial
                 if not encontrado:
-                    # Buscar en historial
-                    for item in self.tree_historial.get_children():
-                        valores = self.tree_historial.item(item, "values")
-                        if valores:
-                            folio_item = int(valores[0].replace(',', ''))  # Remover comas si las hay
-                            if folio_item == folio_buscado:
-                                self.notebook.select(1)  # Cambiar a pestaña historial
-                                self.tree_historial.selection_set(item)
-                                self.tree_historial.focus(item)
-                                self.tree_historial.see(item)
-                                # Highlight el item encontrado
-                                self.tree_historial.item(item, tags=("found",))
-                                self.tree_historial.tag_configure("found", background="yellow")
-                                # Remover highlight después de 3 segundos
-                                self.root.after(3000, lambda: self.tree_historial.item(item, tags=()))
-                                encontrado = True
-                                break
+                    encontrado = self._buscar_en_tree(self.tree_historial, folio_buscado, 1, "Historial")
                 
+                # Si no se encuentra en ningún lado
                 if not encontrado:
                     messagebox.showinfo("No Encontrado", 
                                     f"No se encontró orden con folio {folio_buscado:06d}")
@@ -410,6 +388,77 @@ class VentanaOrdenes:
         except ValueError:
             messagebox.showwarning("Búsqueda Inválida", 
                                 "Para buscar por folio, ingrese solo números")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error durante la búsqueda: {str(e)}")
+    
+    def _buscar_en_tree(self, tree, folio_buscado, tab_index, tab_name):
+        """
+        Busca un folio específico en un treeview y lo selecciona si lo encuentra
+        
+        Args:
+            tree: El treeview donde buscar
+            folio_buscado: El número de folio a buscar
+            tab_index: Índice de la pestaña (0=activas, 1=historial)
+            tab_name: Nombre de la pestaña para mensajes
+            
+        Returns:
+            bool: True si se encontró y seleccionó el item, False si no se encontró
+        """
+        try:
+            for item in tree.get_children():
+                valores = tree.item(item, "values")
+                if valores and len(valores) > 0:
+                    # Extraer folio del primer valor (puede tener formato 000123 o solo 123)
+                    folio_str = str(valores[0]).strip()
+                    
+                    # Remover comas y ceros iniciales para comparación
+                    folio_item = int(folio_str.replace(',', '').lstrip('0') or '0')
+                    
+                    if folio_item == folio_buscado:
+                        # Cambiar a la pestaña correcta
+                        self.notebook.select(tab_index)
+                        
+                        # Seleccionar y enfocar el item
+                        tree.selection_set(item)
+                        tree.focus(item)
+                        tree.see(item)
+                        
+                        # Aplicar highlight visual
+                        tree.item(item, tags=("found",))
+                        tree.tag_configure("found", background="lightblue", foreground="black")
+                        
+                        # Remover highlight después de 5 segundos
+                        self.root.after(5000, lambda: self._remover_highlight(tree, item))
+                        
+                        # Mensaje de éxito
+                        print(f"✅ Folio {folio_buscado:06d} encontrado en {tab_name}")
+                        
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error buscando en {tab_name}: {e}")
+            return False
+    
+    def _limpiar_highlights(self):
+        """Limpia todos los highlights previos en ambos trees"""
+        try:
+            for item in self.tree_activas.get_children():
+                self.tree_activas.item(item, tags=())
+            
+            for item in self.tree_historial.get_children():
+                self.tree_historial.item(item, tags=())
+        except Exception as e:
+            print(f"Error limpiando highlights: {e}")
+    
+    def _remover_highlight(self, tree, item):
+        """Remueve el highlight de un item específico"""
+        try:
+            if tree.exists(item):
+                tree.item(item, tags=())
+        except Exception as e:
+            print(f"Error removiendo highlight: {e}")
         
     
     def _aplicar_filtro(self):
