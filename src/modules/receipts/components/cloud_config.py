@@ -8,8 +8,8 @@ load_dotenv()
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'port': int(os.getenv('DB_PORT', 3306)),
-    'user': os.getenv('DB_USER', 'jared'),
-    'password': os.getenv('DB_PASSWORD', 'zoibnG31!!EAEA'),
+    'user': os.getenv('DB_USER', 'Jared'),
+    'password': os.getenv('DB_PASSWORD', 'Zoi.1.J0t0'),
     'database': os.getenv('DB_NAME', 'disfruleg'),
     'auth_plugin': 'mysql_native_password',
     'charset': 'utf8mb4',

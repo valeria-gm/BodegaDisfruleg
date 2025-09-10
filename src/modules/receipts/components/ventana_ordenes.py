@@ -133,9 +133,6 @@ class VentanaOrdenes:
                                command=self._buscar_por_folio)
         btn_buscar.pack(side="left", padx=(0, 5))
         
-        btn_limpiar = ttk.Button(search_frame, text="✖ Limpiar",
-                                command=self._limpiar_busqueda)
-        btn_limpiar.pack(side="left")
         
         # Frame derecho - Acciones
         actions_frame = ttk.Frame(toolbar_frame)
@@ -414,10 +411,6 @@ class VentanaOrdenes:
             messagebox.showwarning("Búsqueda Inválida", 
                                 "Para buscar por folio, ingrese solo números")
         
-    def _limpiar_busqueda(self):
-        """Limpia el filtro de búsqueda"""
-        self.filtro_busqueda.set("")
-        self._aplicar_filtro()
     
     def _aplicar_filtro(self):
         """Aplica filtro a las listas según el texto de búsqueda"""
@@ -536,6 +529,10 @@ class VentanaOrdenes:
         """Fuerza actualización manual cuando se presiona el botón"""
         try:
             print("🔄 Actualizando listas manualmente...")
+
+            # NUEVO: Forzar nueva conexión para evitar cache
+            self.orden_manager._close_connection()
+
             
             # Limpiar filtros temporalmente para mostrar todos los datos
             filtro_actual = self.filtro_busqueda.get()
