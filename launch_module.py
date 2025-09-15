@@ -247,11 +247,32 @@ def launch_users_module(user_data=None):
         import traceback
         traceback.print_exc()
 
+def launch_debts_module(user_data=None):
+    """Launch the debt management module"""
+    try:
+        os.chdir(project_root)
+        from src.modules.deudas.debt_window import launch_debt_window
+        
+        if user_data is None:
+            user_data = {
+                'nombre_completo': 'Usuario de Prueba',
+                'rol': 'admin',
+                'username': 'test'
+            }
+        
+        launch_debt_window(user_data)
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo cargar el módulo de deudas: {str(e)}")
+        print(f"Error launching debts module: {e}")
+        import traceback
+        traceback.print_exc()
+
 def main():
     """Main entry point when script is run directly"""
     if len(sys.argv) < 2:
         print("Usage: python launch_module.py <module_name>")
-        print("Available modules: receipts, pricing, inventory, analytics, clients, users")
+        print("Available modules: receipts, pricing, inventory, analytics, clients, users, debts")
         sys.exit(1)
     
     module_name = sys.argv[1].lower()
@@ -278,9 +299,11 @@ def main():
         launch_clients_module(user_data)
     elif module_name == "users":
         launch_users_module(user_data)
+    elif module_name == "debts":
+        launch_debts_module(user_data)
     else:
         print(f"Unknown module: {module_name}")
-        print("Available modules: receipts, pricing, inventory, analytics, clients, users")
+        print("Available modules: receipts, pricing, inventory, analytics, clients, users, debts")
         sys.exit(1)
 
 if __name__ == "__main__":

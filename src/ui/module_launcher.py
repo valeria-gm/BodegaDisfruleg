@@ -78,6 +78,14 @@ class ModuleLauncher:
                 'bg_color': '#34495E',
                 'hover_color': '#2C3E50',
                 'requires_admin': True
+            },
+            {
+                'title': 'Gestión de Deudas',
+                'description': 'Control de cuentas por cobrar\ny seguimiento de pagos',
+                'module_key': 'debts',
+                'bg_color': '#E67E22',
+                'hover_color': '#D35400',
+                'requires_admin': True
             }
         ]
     
