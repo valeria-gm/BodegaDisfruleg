@@ -835,26 +835,42 @@ class ReciboAppMejorado:
                 # Generar PDF automáticamente
                 self._generar_pdf_venta(widgets, venta_id, folio_factura)
                 
-                # Limpiar carrito después de venta exitosa
-                self._limpiar_carrito(widgets)
-                
-                # Si era una orden guardada, cerrar ventana
-                if self.folio_actual and self.orden_guardada:
-                    messagebox.showinfo("Venta Completada", 
+                # Limpiar carrito directamente sin confirmaciones después de venta exitosa
+                widgets['carrito_obj'].items.clear()
+                widgets['carrito_obj']._actualizar_display()
+                widgets['carrito_obj']._notificar_cambio()  # Trigger UI updates
+
+                # Determinar si era una orden guardada ANTES de resetear estado
+                era_orden_guardada = self.folio_actual and self.orden_guardada
+                folio_orden = self.folio_actual
+
+                # Resetear estado de orden guardada si aplica
+                if era_orden_guardada:
+                    tab_actual = self.notebook.select()
+                    tab_id = tab_actual.split(".")[-1]
+                    self.orden_guardada = False
+                    self.folios_pestanas[tab_id] = None
+                    self.folio_actual = None
+
+                # Si era una orden guardada, mostrar confirmación y cerrar ventana automáticamente
+                if era_orden_guardada:
+                    messagebox.showinfo("Venta Completada",
                                     f"Venta registrada exitosamente\n"
                                     f"ID de factura: {venta_id}\n"
                                     f"Folio: {folio_factura:06d}\n"
-                                    f"Orden {self.folio_actual:06d} marcada como completada.")
-                    
-                    # Notificar al padre sobre el cambio si estamos en contexto de launcher
+                                    f"Orden {folio_orden:06d} marcada como completada.\n\n"
+                                    f"La ventana se cerrará automáticamente.")
+
+                    # Notificar al padre y cerrar ventana automáticamente
                     if self.is_launcher_context:
                         self._notificar_cambio_orden()
-                        self.root.destroy()
+                    self.root.destroy()
                 else:
-                    messagebox.showinfo("Venta Exitosa", 
+                    messagebox.showinfo("Venta Exitosa",
                                       f"Venta registrada exitosamente\n"
                                       f"ID: {venta_id}\n"
-                                      f"Folio: {folio_factura:06d}")
+                                      f"Folio: {folio_factura:06d}\n\n"
+                                      f"El carrito ha sido limpiado automáticamente.")
             else:
                 messagebox.showerror("Error", "No se pudo registrar la venta en la base de datos.")
                 
