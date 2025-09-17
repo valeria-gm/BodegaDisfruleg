@@ -22,7 +22,10 @@ class DebtManagementWindow:
         # Variables
         self.search_var = tk.StringVar()
         self.search_var.trace("w", self.filter_debts)
+        self.search_history_var = tk.StringVar()
+        self.search_history_var.trace("w", self.filter_payment_history)
         self.clientes_deudas = []
+        self.historial_pagos = []
         
         self.create_interface()
         self.load_data()
@@ -32,40 +35,20 @@ class DebtManagementWindow:
         # Title
         title_frame = tk.Frame(self.root)
         title_frame.pack(fill="x", pady=10)
-        
+
         tk.Label(title_frame, text="GESTIÓN DE DEUDAS", font=("Arial", 18, "bold")).pack()
-        
+
         # Statistics frame
         self.create_statistics_frame()
-        
-        # Search and actions frame
-        action_frame = tk.Frame(self.root)
-        action_frame.pack(fill="x", pady=5, padx=10)
-        
-        # Search section
-        search_frame = tk.Frame(action_frame)
-        search_frame.pack(side="left", fill="x", expand=True)
-        
-        tk.Label(search_frame, text="Buscar Cliente:", font=("Arial", 12)).pack(side="left", padx=5)
-        self.search_entry = tk.Entry(search_frame, width=30, textvariable=self.search_var)
-        self.search_entry.pack(side="left", padx=5)
-        
-        # Buttons section
-        buttons_frame = tk.Frame(action_frame)
-        buttons_frame.pack(side="right")
-        
-        tk.Button(buttons_frame, text="Actualizar", command=self.load_data, 
-                  bg="#2196F3", fg="white", padx=10, pady=3).pack(side="left", padx=5)
-        tk.Button(buttons_frame, text="Ver Detalles", command=self.view_client_details, 
-                  bg="#4CAF50", fg="white", padx=10, pady=3).pack(side="left", padx=5)
-        
-        # Main treeview frame
-        tree_frame = tk.Frame(self.root)
-        tree_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        # Create treeview with scrollbar
-        self.create_treeview(tree_frame)
-        
+
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Create tabs
+        self.create_pending_debts_tab()
+        self.create_payment_history_tab()
+
         # Status bar
         self.status_var = tk.StringVar(value="Listo")
         status_bar = tk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
@@ -106,11 +89,45 @@ class DebtManagementWindow:
         tk.Label(stats_grid, textvariable=self.stats_vars['total_deudas_pendientes'], 
                 font=("Arial", 10)).grid(row=1, column=3, sticky="w", padx=10, pady=5)
     
-    def create_treeview(self, parent):
+    def create_pending_debts_tab(self):
+        """Create the pending debts tab"""
+        # Create tab frame
+        pending_frame = ttk.Frame(self.notebook)
+        self.notebook.add(pending_frame, text="Deudas Pendientes")
+
+        # Search and actions frame for pending debts
+        action_frame = tk.Frame(pending_frame)
+        action_frame.pack(fill="x", pady=5, padx=10)
+
+        # Search section
+        search_frame = tk.Frame(action_frame)
+        search_frame.pack(side="left", fill="x", expand=True)
+
+        tk.Label(search_frame, text="Buscar Cliente:", font=("Arial", 12)).pack(side="left", padx=5)
+        self.search_entry = tk.Entry(search_frame, width=30, textvariable=self.search_var)
+        self.search_entry.pack(side="left", padx=5)
+
+        # Buttons section
+        buttons_frame = tk.Frame(action_frame)
+        buttons_frame.pack(side="right")
+
+        tk.Button(buttons_frame, text="Actualizar", command=self.load_data,
+                  bg="#2196F3", fg="white", padx=10, pady=3).pack(side="left", padx=5)
+        tk.Button(buttons_frame, text="Ver Detalles", command=self.view_client_details,
+                  bg="#4CAF50", fg="white", padx=10, pady=3).pack(side="left", padx=5)
+
+        # Main treeview frame for pending debts
+        tree_frame = tk.Frame(pending_frame)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Create treeview with scrollbar for pending debts
+        self.create_pending_debts_treeview(tree_frame)
+
+    def create_pending_debts_treeview(self, parent):
         """Create the main treeview for clients with debts"""
         # Create treeview
         self.tree = ttk.Treeview(parent, columns=("cliente", "grupo", "tipo", "saldo", "deudas", "ultima_deuda"), show="headings")
-        
+
         # Configure columns
         self.tree.heading("cliente", text="Cliente")
         self.tree.heading("grupo", text="Grupo")
@@ -118,7 +135,7 @@ class DebtManagementWindow:
         self.tree.heading("saldo", text="Saldo Pendiente")
         self.tree.heading("deudas", text="Deudas Pendientes")
         self.tree.heading("ultima_deuda", text="Última Deuda")
-        
+
         # Set column widths
         self.tree.column("cliente", width=250)
         self.tree.column("grupo", width=80)
@@ -126,31 +143,102 @@ class DebtManagementWindow:
         self.tree.column("saldo", width=120)
         self.tree.column("deudas", width=100)
         self.tree.column("ultima_deuda", width=100)
-        
+
         # Create scrollbar
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
-        
+
         # Pack treeview and scrollbar
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        
+
         # Bind double-click event
         self.tree.bind("<Double-1>", self.on_double_click)
+
+    def create_payment_history_tab(self):
+        """Create the payment history tab"""
+        # Create tab frame
+        history_frame = ttk.Frame(self.notebook)
+        self.notebook.add(history_frame, text="Historial de Pagos")
+
+        # Search and actions frame for payment history
+        history_action_frame = tk.Frame(history_frame)
+        history_action_frame.pack(fill="x", pady=5, padx=10)
+
+        # Search section for history
+        history_search_frame = tk.Frame(history_action_frame)
+        history_search_frame.pack(side="left", fill="x", expand=True)
+
+        tk.Label(history_search_frame, text="Buscar Cliente:", font=("Arial", 12)).pack(side="left", padx=5)
+        self.search_history_entry = tk.Entry(history_search_frame, width=30, textvariable=self.search_history_var)
+        self.search_history_entry.pack(side="left", padx=5)
+
+        # Buttons section for history
+        history_buttons_frame = tk.Frame(history_action_frame)
+        history_buttons_frame.pack(side="right")
+
+        tk.Button(history_buttons_frame, text="Actualizar Historial", command=self.load_payment_history,
+                  bg="#2196F3", fg="white", padx=10, pady=3).pack(side="left", padx=5)
+
+        # Main treeview frame for payment history
+        history_tree_frame = tk.Frame(history_frame)
+        history_tree_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Create treeview for payment history
+        self.create_payment_history_treeview(history_tree_frame)
+
+    def create_payment_history_treeview(self, parent):
+        """Create the treeview for payment history"""
+        # Create treeview for payment history
+        self.history_tree = ttk.Treeview(parent,
+                                       columns=("cliente", "grupo", "folio", "monto_total", "monto_pagado",
+                                               "fecha_pago", "metodo_pago", "referencia"),
+                                       show="headings")
+
+        # Configure columns
+        self.history_tree.heading("cliente", text="Cliente")
+        self.history_tree.heading("grupo", text="Grupo")
+        self.history_tree.heading("folio", text="No. de Folio")
+        self.history_tree.heading("monto_total", text="Monto Total")
+        self.history_tree.heading("monto_pagado", text="Monto Pagado")
+        self.history_tree.heading("fecha_pago", text="Fecha de Pago")
+        self.history_tree.heading("metodo_pago", text="Método de Pago")
+        self.history_tree.heading("referencia", text="Referencia")
+
+        # Set column widths
+        self.history_tree.column("cliente", width=200)
+        self.history_tree.column("grupo", width=80)
+        self.history_tree.column("folio", width=90)
+        self.history_tree.column("monto_total", width=110)
+        self.history_tree.column("monto_pagado", width=110)
+        self.history_tree.column("fecha_pago", width=110)
+        self.history_tree.column("metodo_pago", width=130)
+        self.history_tree.column("referencia", width=120)
+
+        # Create scrollbar for history tree
+        history_scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=history_scrollbar.set)
+
+        # Pack treeview and scrollbar
+        self.history_tree.pack(side="left", fill="both", expand=True)
+        history_scrollbar.pack(side="right", fill="y")
     
     def load_data(self):
-        """Load all data: statistics and clients with debts"""
+        """Load all data: statistics, clients with debts, and payment history"""
         self.status_var.set("Cargando datos...")
         try:
             # Load statistics
             self.load_statistics()
-            
+
             # Load clients with debts
             self.load_clients_with_debts()
-            
-            self.status_var.set(f"Datos cargados - {len(self.clientes_deudas)} clientes con deuda")
+
+            # Load payment history
+            self.load_payment_history()
+
+            self.status_var.set(f"Datos cargados - {len(self.clientes_deudas)} clientes con deuda, {len(self.historial_pagos)} pagos registrados")
             debug_print("Datos de deudas cargados correctamente")
-            
+
         except Exception as e:
             self.status_var.set("Error cargando datos")
             messagebox.showerror("Error", f"Error cargando datos: {e}")
@@ -200,9 +288,47 @@ class DebtManagementWindow:
                     cliente['ultima_deuda_generada'] or "N/A"
                 ), tags=(cliente['id_cliente'],))
     
+    def load_payment_history(self):
+        """Load payment history data"""
+        try:
+            self.historial_pagos = self.debt_manager.obtener_historial_pagos()
+            self.update_payment_history_treeview()
+            debug_print(f"Historial de pagos cargado: {len(self.historial_pagos)} registros")
+        except Exception as e:
+            debug_print(f"Error cargando historial de pagos: {e}")
+            messagebox.showerror("Error", f"Error cargando historial de pagos: {e}")
+
+    def update_payment_history_treeview(self):
+        """Update the payment history treeview with current data"""
+        # Clear existing items
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+
+        # Filter payments based on search term
+        search_term = self.search_history_var.get().lower()
+
+        for pago in self.historial_pagos:
+            if not search_term or search_term in pago['nombre_cliente'].lower():
+                # Insert payment data
+                self.history_tree.insert("", "end", values=(
+                    pago['nombre_cliente'],
+                    pago['clave_grupo'],
+                    pago['folio_numero'],
+                    f"${pago['monto_total']:,.2f}",
+                    f"${pago['monto_pagado']:,.2f}",
+                    pago['fecha_pago'] or "N/A",
+                    pago['metodo_pago'] or "N/A",
+                    pago['referencia_pago'] or "N/A"
+                ), tags=(pago['id_deuda'],))
+
     def filter_debts(self, *args):
         """Filter debts based on search term"""
         self.update_treeview()
+
+    def filter_payment_history(self, *args):
+        """Filter payment history based on search term"""
+        self.update_payment_history_treeview()
+
     
     def on_double_click(self, event):
         """Handle double-click on treeview item"""
@@ -422,6 +548,13 @@ class DebtManagementWindow:
                     
                     # Refresh main data
                     self.load_data()
+
+                    # Refresh current window
+                    # Get client ID from the debt
+                    deuda_info = self.debt_manager.obtener_deuda_por_id(id_deuda)
+                    if deuda_info:
+                        parent_window.destroy()
+                        self.open_client_details_window(deuda_info['id_cliente'])
                     
                 except (ValueError, decimal.InvalidOperation):
                     messagebox.showerror("Error", "Ingrese un monto válido")
