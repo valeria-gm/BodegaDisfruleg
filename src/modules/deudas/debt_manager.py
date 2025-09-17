@@ -291,6 +291,7 @@ class DebtManager:
                 id_cliente,
                 nombre_cliente,
                 id_factura,
+                folio_numero,
                 monto_total,
                 monto_pagado,
                 fecha_pago,
