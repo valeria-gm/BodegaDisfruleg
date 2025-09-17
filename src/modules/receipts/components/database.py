@@ -303,7 +303,7 @@ def obtener_siguiente_folio():
 
 # --- Funciones de Facturación (CORREGIDA PARA NUEVA ESTRUCTURA) ---
 
-def crear_factura_completa(id_cliente, items_carrito, fecha_venta=None):
+def crear_factura_completa(id_cliente, items_carrito, fecha_venta=None, folio_especifico=None):
     """
     Crea una transacción completa: factura, detalles, deuda y actualiza stock.
     Retorna un diccionario con el ID de la nueva factura y el número de folio.
@@ -333,10 +333,14 @@ def crear_factura_completa(id_cliente, items_carrito, fecha_venta=None):
         # Iniciar una transacción para asegurar que todas las operaciones se completen
         conn.start_transaction()
 
-        # 1. Obtener el siguiente número de folio
-        folio_numero = obtener_siguiente_folio()
-        if folio_numero is None:
-            raise Error("No se pudo obtener el número de folio")
+        # 1. Obtener el número de folio (específico o siguiente disponible)
+        if folio_especifico is not None:
+            folio_numero = folio_especifico
+            print(f"Usando folio específico para orden guardada: {folio_numero}")
+        else:
+            folio_numero = obtener_siguiente_folio()
+            if folio_numero is None:
+                raise Error("No se pudo obtener el número de folio")
 
         # 2. Crear la factura con número de folio
         query_factura = """
@@ -390,12 +394,12 @@ def crear_factura_completa(id_cliente, items_carrito, fecha_venta=None):
         'folio_numero': folio_numero
     } if id_factura_nueva else None
 
-def registrar_venta(id_cliente, usuario, items_carrito, total, fecha_venta=None):
+def registrar_venta(id_cliente, usuario, items_carrito, total, fecha_venta=None, folio_especifico=None):
     """
     Función alternativa simplificada para registrar venta.
     Retorna el ID de la factura creada o None en caso de error.
     """
-    resultado = crear_factura_completa(id_cliente, items_carrito, fecha_venta)
+    resultado = crear_factura_completa(id_cliente, items_carrito, fecha_venta, folio_especifico)
     return resultado['id_factura'] if resultado else None
 
 # --- Funciones para Órdenes Guardadas (NUEVAS) ---

@@ -822,7 +822,10 @@ class ReciboAppMejorado:
                 return
 
             # Registrar venta en BD con fecha específica
-            resultado_venta = database.crear_factura_completa(id_cliente, items_para_bd, fecha_venta)
+            #resultado_venta = database.crear_factura_completa(id_cliente, items_para_bd, fecha_venta)
+            # Usar folio específico si es una orden guardada
+            folio_a_usar = self.folio_actual if (self.folio_actual and self.orden_guardada) else None
+            resultado_venta = database.crear_factura_completa(id_cliente, items_para_bd, fecha_venta, folio_a_usar)
 
             if resultado_venta and resultado_venta['id_factura']:
                 venta_id = resultado_venta['id_factura']
