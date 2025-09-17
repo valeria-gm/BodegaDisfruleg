@@ -1,7 +1,5 @@
 USE disfruleg;
 
-USE disfruleg;
-
 -- Vista para detalle de factura con descuento (DEBE IR PRIMERO)
 CREATE OR REPLACE VIEW vista_detalle_factura_con_descuento AS
 SELECT 
