@@ -87,11 +87,12 @@ JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente;
 
 -- Vista para historial de pagos
 CREATE OR REPLACE VIEW vista_historial_pagos AS
-SELECT 
+SELECT
     d.id_deuda,
     c.id_cliente,
     c.nombre_cliente,
     f.id_factura,
+    f.folio_numero,
     d.monto AS monto_total,
     d.monto_pagado,
     d.fecha_pago,
