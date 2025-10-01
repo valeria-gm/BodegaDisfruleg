@@ -689,7 +689,7 @@ class AnalisisGananciasApp:
                         LIMIT 12
                     """,
                     "Semana": """
-                        SELECT DISTINCT DATE_FORMAT(f.fecha_factura, '%Y-%u') AS periodo 
+                        SELECT DISTINCT DATE_FORMAT(f.fecha_factura, '%x-W%v') AS periodo 
                         FROM factura f
                         WHERE f.fecha_factura IS NOT NULL
                         AND f.fecha_factura >= DATE_SUB(CURRENT_DATE, INTERVAL 12 WEEK)
@@ -770,7 +770,7 @@ class AnalisisGananciasApp:
                 try:
                     period_func_map = {
                         "Día": "DATE(f.fecha_factura)",
-                        "Semana": "DATE_FORMAT(f.fecha_factura, '%Y-%u')",
+                        "Semana": "DATE_FORMAT(f.fecha_factura, '%x-W%v')",
                         "Mes": "DATE_FORMAT(f.fecha_factura, '%Y-%m')",
                         "Trimestre": "CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))",
                         "Año": "YEAR(f.fecha_factura)"
@@ -865,7 +865,7 @@ class AnalisisGananciasApp:
                     # Mapeo de funciones de período
                     period_func_map = {
                         "Día": "DATE_FORMAT(f.fecha_factura, '%Y-%m-%d')",
-                        "Semana": "DATE_FORMAT(f.fecha_factura, '%Y-%u')",
+                        "Semana": "DATE_FORMAT(f.fecha_factura, '%x-W%v')",
                         "Mes": "DATE_FORMAT(f.fecha_factura, '%Y-%m')",
                         "Trimestre": "CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))",
                         "Año": "YEAR(f.fecha_factura)"
@@ -975,7 +975,7 @@ class AnalisisGananciasApp:
                 try:
                     period_func_map = {
                         "Día": "DATE_FORMAT(f.fecha_factura, '%Y-%m-%d')",
-                        "Semana": "DATE_FORMAT(f.fecha_factura, '%Y-%u')",
+                        "Semana": "DATE_FORMAT(f.fecha_factura, '%x-W%v')",
                         "Mes": "DATE_FORMAT(f.fecha_factura, '%Y-%m')",
                         "Trimestre": "CONCAT(YEAR(f.fecha_factura), '-Q', QUARTER(f.fecha_factura))",
                         "Año": "YEAR(f.fecha_factura)"
